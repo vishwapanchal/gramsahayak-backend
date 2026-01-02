@@ -1,12 +1,12 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.database import db
-from app.routers import auth, community  # <--- Imported community here
+from app.routers import auth, community, users, projects, dashboard # <--- Added dashboard
 import pymongo
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create indexes to ensure uniqueness (No duplicate phone numbers/IDs)
     await db.villagers.create_index([("phone_number", pymongo.ASCENDING)], unique=True)
     await db.contractors.create_index([("contractor_id", pymongo.ASCENDING)], unique=True)
     await db.government_officials.create_index([("government_id", pymongo.ASCENDING)], unique=True)
@@ -14,9 +14,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Gram-Sahayak API", version="1.0.0", lifespan=lifespan)
 
-# Register the Routers
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(auth.router)
-app.include_router(community.router)  # <--- Added this line to activate community endpoints
+app.include_router(community.router)
+app.include_router(users.router)
+app.include_router(projects.router)
+app.include_router(dashboard.router) # <--- Registered Dashboard
 
 @app.get("/")
 async def root():
