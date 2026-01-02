@@ -1,72 +1,119 @@
 #!/bin/bash
 
-echo "🔄 Automating Village Detection in Dashboard..."
+# ==========================================
+# SETUP AWS S3 BUCKET & ENV
+# ==========================================
 
-# Rewrite app/routers/dashboard.py
-cat <<EOF > app/routers/dashboard.py
-from fastapi import APIRouter, Query, HTTPException
-from app.database import db
-from app.schemas import DashboardStats
-from bson import ObjectId
+echo "☁️  Starting AWS S3 Setup..."
 
-router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
+# 1. Check if AWS CLI is installed
+if ! command -v aws &> /dev/null; then
+    echo "❌ AWS CLI not found. Please install it first."
+    exit 1
+fi
 
-@router.get("/stats", response_model=DashboardStats)
-async def get_dashboard_stats(
-    villager_id: str = Query(..., description="ID of the logged-in user")
-):
-    """
-    Calculates Dashboard Metrics.
-    Automatically fetches the village name from the user's profile.
-    """
-    
-    # 1. Fetch User Profile to get Village Name
-    try:
-        user_obj_id = ObjectId(villager_id)
-    except:
-        raise HTTPException(status_code=400, detail="Invalid User ID format")
+# 2. Get Default Region or Prompt
+CONFIGURED_REGION=$(aws configure get region)
+read -p "Enter AWS Region [Default: $CONFIGURED_REGION]: " AWS_REGION
+AWS_REGION=${AWS_REGION:-$CONFIGURED_REGION}
 
-    user = await db.villagers.find_one({"_id": user_obj_id})
-    if not user:
-        raise HTTPException(status_code=404, detail="Villager not found")
-        
-    village_name = user["village_name"] # <--- Auto-detected from DB
-    
-    # 2. CARD: Budget Used (Sum of 'In Progress' projects in THIS village)
-    pipeline = [
-        {"\$match": {"village_name": village_name, "status": "In Progress"}},
-        {"\$group": {"_id": None, "total": {"\$sum": "\$allocated_budget"}}}
+if [ -z "$AWS_REGION" ]; then
+    echo "❌ Region is required."
+    exit 1
+fi
+
+# 3. Get Bucket Name
+read -p "Enter a UNIQUE Bucket Name (e.g., gramsahayak-uploads-2025): " AWS_BUCKET_NAME
+
+if [ -z "$AWS_BUCKET_NAME" ]; then
+    echo "❌ Bucket Name is required."
+    exit 1
+fi
+
+echo "-------------------------------------"
+echo "🛠️  Creating Bucket: $AWS_BUCKET_NAME in $AWS_REGION..."
+
+# 4. Create Bucket
+if [ "$AWS_REGION" == "us-east-1" ]; then
+    aws s3api create-bucket --bucket "$AWS_BUCKET_NAME" --region "$AWS_REGION"
+else
+    aws s3api create-bucket --bucket "$AWS_BUCKET_NAME" --region "$AWS_REGION" --create-bucket-configuration LocationConstraint="$AWS_REGION"
+fi
+
+if [ $? -ne 0 ]; then
+    echo "❌ Failed to create bucket. Name might be taken. Try again."
+    exit 1
+fi
+
+# 5. Disable "Block Public Access" (Required for Public URLs)
+echo "🔓 Unblocking Public Access..."
+aws s3api put-public-access-block \
+    --bucket "$AWS_BUCKET_NAME" \
+    --public-access-block-configuration "BlockPublicAcls=false,IgnorePublicAcls=false,BlockPublicPolicy=false,RestrictPublicBuckets=false"
+
+# 6. Apply Public Read Policy
+echo "📜 Applying Bucket Policy..."
+POLICY_JSON=$(cat <<EOF
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "PublicReadGetObject",
+            "Effect": "Allow",
+            "Principal": "*",
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::$AWS_BUCKET_NAME/*"
+        }
     ]
-    budget_result = await db.projects.aggregate(pipeline).to_list(1)
-    budget_used = budget_result[0]["total"] if budget_result else 0.0
-
-    # 3. CARD: Issues Resolved 
-    # (For MVP, we count global resolved. In V2, we can filter by village too)
-    issues_resolved = await db.discussions.count_documents({"status": "Resolved"})
-
-    # 4. CARD: Village Mood (AI Sentiment)
-    last_insight = await db.insights.find_one(sort=[("generated_at", -1)])
-    sentiment = last_insight["sentiment_score"] if last_insight else 0
-    
-    if sentiment > 0.3: mood = "Happy 🙂"
-    elif sentiment < -0.3: mood = "Angry 😡"
-    else: mood = "Neutral 😐"
-
-    # 5. CARD: Personal Impact (The User's Contribution)
-    personal_impact = await db.discussions.count_documents({
-        "real_user_id": villager_id,
-        "status": "Resolved"
-    })
-
-    return DashboardStats(
-        budget_used=budget_used,
-        issues_resolved=issues_resolved,
-        village_mood=mood,
-        personal_impact=personal_impact,
-        next_meeting="Jan 24, 10 AM"
-    )
+}
 EOF
+)
 
-echo "-----------------------------------"
-echo "✅ Dashboard updated! Village is now auto-detected."
-echo "-----------------------------------"
+aws s3api put-bucket-policy --bucket "$AWS_BUCKET_NAME" --policy "$POLICY_JSON"
+
+if [ $? -eq 0 ]; then
+    echo "✅ Bucket Policy Applied (Public Read Enabled)."
+else
+    echo "❌ Failed to apply policy."
+    exit 1
+fi
+
+# 7. Update .env File
+echo "📝 Updating .env file..."
+
+# Fetch credentials from AWS CLI config
+AWS_ACCESS_KEY_ID=$(aws configure get aws_access_key_id)
+AWS_SECRET_ACCESS_KEY=$(aws configure get aws_secret_access_key)
+
+# Function to update or append variable in .env
+update_env() {
+    key=$1
+    value=$2
+    file=".env"
+
+    if grep -q "^$key=" "$file"; then
+        # Replace existing value (using | as delimiter to handle slashes)
+        sed -i "s|^$key=.*|$key=$value|" "$file"
+    else
+        # Append new value
+        echo "$key=$value" >> "$file"
+    fi
+}
+
+# Ensure .env exists
+touch .env
+
+update_env "AWS_ACCESS_KEY_ID" "$AWS_ACCESS_KEY_ID"
+update_env "AWS_SECRET_ACCESS_KEY" "$AWS_SECRET_ACCESS_KEY"
+update_env "AWS_REGION" "$AWS_REGION"
+update_env "AWS_BUCKET_NAME" "$AWS_BUCKET_NAME"
+
+echo "-------------------------------------"
+echo "🎉 SUCCESS: S3 Bucket Configured!"
+echo "-------------------------------------"
+echo "Bucket: $AWS_BUCKET_NAME"
+echo "Region: $AWS_REGION"
+echo "Policy: Public Read Access"
+echo "Creds:  Updated in .env"
+echo "-------------------------------------"
+echo "👉 You can now try uploading files via the API."

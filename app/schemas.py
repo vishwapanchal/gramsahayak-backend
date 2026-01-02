@@ -1,5 +1,6 @@
 from pydantic import BaseModel, EmailStr, Field, validator
-from typing import Optional
+from typing import Optional, List
+from datetime import datetime
 
 # --- Villager Schemas ---
 class VillagerSignup(BaseModel):
@@ -47,16 +48,14 @@ class OfficialCreate(BaseModel):
     name: str
     email: EmailStr
     government_id: str
+    village_name: str
     password: str
     role: str = "government_official"
-# ... (keep existing models) ...
-
-from datetime import datetime
 
 # --- Community Discussion Models ---
 class DiscussionCreate(BaseModel):
     content: str
-    category: str = "General"  # e.g., Water, Roads, Electricity (User selects this)
+    category: str = "General"
     is_anonymous: bool = False
 
 class DiscussionResponse(BaseModel):
@@ -73,13 +72,14 @@ class InsightCreate(BaseModel):
     period_end: datetime
     summary: str
     top_issues: list[str]
-    sentiment_score: float  # -1 (Negative) to +1 (Positive)
+    sentiment_score: float
     suggested_actions: list[str]
 
 class InsightResponse(InsightCreate):
     id: str
     generated_at: datetime
-# --- User Response Schemas (Added by setup_users_api.sh) ---
+
+# --- User Response Schemas ---
 class VillagerResponse(BaseModel):
     id: str
     name: str
@@ -92,6 +92,8 @@ class VillagerResponse(BaseModel):
     district: str
     state: str
     role: str
+    govt_official_id: Optional[str] = None
+    complaints_raised: List[str] = []
 
 class ContractorResponse(BaseModel):
     id: str
@@ -106,36 +108,17 @@ class OfficialResponse(BaseModel):
     name: str
     email: EmailStr
     government_id: str
+    village_name: str
     role: str
+    assigned_complaints: List[str] = []
 
-# --- Project Schemas (Added by setup_projects.sh) ---
-class ProjectCreate(BaseModel):
-    project_name: str
-    description: str
-    category: str  # e.g., Water, Roads, Sanitation
-    location: str
-    contractor_name: str
-    contractor_id: str
-    contractor_address: str
-    allocated_budget: float
-    approved_by: str
-    start_date: datetime
-    due_date: datetime
-    status: str = "Pending"  # Pending, In Progress, Completed, Halted
-    images: list[str] = []   # URLs to images
-
-class ProjectResponse(ProjectCreate):
-    id: str
-    created_at: datetime
-    milestones: list[str] = [] # e.g., ["Tender Passed", "Foundation Laid"]
-
-# --- UPDATED Project Schemas (With village_name) ---
+# --- Project Schemas ---
 class ProjectCreate(BaseModel):
     project_name: str
     description: str
     category: str
-    village_name: str  # <--- New Field
-    location: str      # e.g., "Ward 4, Near School"
+    village_name: str
+    location: str
     contractor_name: str
     contractor_id: str
     contractor_address: str
@@ -151,10 +134,44 @@ class ProjectResponse(ProjectCreate):
     created_at: datetime
     milestones: list[str] = []
 
-# --- Dashboard Schemas (Added by setup_dashboard.sh) ---
+# --- Dashboard Schemas ---
 class DashboardStats(BaseModel):
-    budget_used: float        # Card 1: Money spent in village
-    issues_resolved: int      # Card 2: Total village issues fixed
-    village_mood: str         # Card 3: Happy/Neutral/Angry
-    personal_impact: int      # Card 4: Issues YOU helped fix
-    next_meeting: str         # Extra: Date of next Gram Sabha
+    budget_used: float
+    issues_resolved: int
+    village_mood: str
+    personal_impact: int
+    next_meeting: str
+
+# --- Government Schemes Schemas ---
+class SchemeBase(BaseModel):
+    scheme_id: str
+    scheme_name: str
+    scheme_desc: str
+    scheme_dept: str
+
+class SchemeResponse(SchemeBase):
+    id: str
+
+# --- Proposed Projects Schemas ---
+class ProposedProjectCreate(BaseModel):
+    village_id: str
+    proposed_project_title: str
+
+class ProposedProjectResponse(BaseModel):
+    id: str
+    village_id: str
+    proposed_project_title: str
+    status: str
+    created_at: datetime
+
+# --- Complaint Schemas (UPDATED) ---
+class ComplaintResponse(BaseModel):
+    id: str
+    complaint_name: str
+    complaint_desc: str
+    location: str
+    status: str
+    village_name: str
+    villager_phone: str
+    attachments: List[str]  # <--- REPLACED photos/pdf with generic attachments list
+    created_at: datetime
