@@ -52,7 +52,7 @@ class OfficialCreate(BaseModel):
     password: str
     role: str = "government_official"
 
-# --- User Response Schemas ---
+# --- User Response Schemas (UPDATED) ---
 class VillagerResponse(BaseModel):
     id: str
     name: str
@@ -67,6 +67,7 @@ class VillagerResponse(BaseModel):
     role: str
     govt_official_id: Optional[str] = None
     complaints_raised: List[str] = []
+    anonymous_identity: Optional[str] = None  # <--- NEW: Shows their permanent alias
 
 class ContractorResponse(BaseModel):
     id: str
@@ -85,7 +86,7 @@ class OfficialResponse(BaseModel):
     role: str
     assigned_complaints: List[str] = []
 
-# --- Community Discussion Models (UPDATED) ---
+# --- Community Discussion Models ---
 class DiscussionComment(BaseModel):
     user_name: str
     user_role: str
@@ -108,7 +109,7 @@ class DiscussionResponse(BaseModel):
     category: str
     created_at: datetime
     upvotes: int
-    replies: List[DiscussionComment] = [] # <--- Added Replies
+    replies: List[DiscussionComment] = []
 
 # --- AI Insight Models ---
 class InsightCreate(BaseModel):

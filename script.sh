@@ -1,13 +1,12 @@
 #!/bin/bash
 
-echo "🚀 Setting up Village-Specific Community Discussions..."
+echo "🚀 Setting up Permanent Anonymous Identities..."
 
 # ==========================================
-# 1. Update Schemas (Add Replies & Village Info)
+# 1. Update Schemas (Expose Identity in Profile)
 # ==========================================
-echo "📝 Updating 'app/schemas.py'..."
+echo "📝 Updating 'app/schemas.py' to include 'anonymous_identity'..."
 
-# We append/update the Discussion schemas to support replies and village filtering
 cat <<EOF > app/schemas.py
 from pydantic import BaseModel, EmailStr, Field, validator
 from typing import Optional, List
@@ -63,7 +62,7 @@ class OfficialCreate(BaseModel):
     password: str
     role: str = "government_official"
 
-# --- User Response Schemas ---
+# --- User Response Schemas (UPDATED) ---
 class VillagerResponse(BaseModel):
     id: str
     name: str
@@ -78,6 +77,7 @@ class VillagerResponse(BaseModel):
     role: str
     govt_official_id: Optional[str] = None
     complaints_raised: List[str] = []
+    anonymous_identity: Optional[str] = None  # <--- NEW: Shows their permanent alias
 
 class ContractorResponse(BaseModel):
     id: str
@@ -96,7 +96,7 @@ class OfficialResponse(BaseModel):
     role: str
     assigned_complaints: List[str] = []
 
-# --- Community Discussion Models (UPDATED) ---
+# --- Community Discussion Models ---
 class DiscussionComment(BaseModel):
     user_name: str
     user_role: str
@@ -119,7 +119,7 @@ class DiscussionResponse(BaseModel):
     category: str
     created_at: datetime
     upvotes: int
-    replies: List[DiscussionComment] = [] # <--- Added Replies
+    replies: List[DiscussionComment] = []
 
 # --- AI Insight Models ---
 class InsightCreate(BaseModel):
@@ -200,9 +200,9 @@ class ComplaintResponse(BaseModel):
 EOF
 
 # ==========================================
-# 2. Update Community Router (Logic Changes)
+# 2. Update Community Router (Permanent Identity Logic)
 # ==========================================
-echo "📝 Rewrite 'app/routers/community.py'..."
+echo "📝 Rewrite 'app/routers/community.py' with Permanent Identity Logic..."
 
 cat <<EOF > app/routers/community.py
 from fastapi import APIRouter, HTTPException, status, Query
@@ -216,8 +216,8 @@ from bson import ObjectId
 router = APIRouter(prefix="/community", tags=["Community Discussion"])
 
 # --- HELPER: Random Anonymizer ---
-ADJECTIVES = ["Silent", "Hidden", "Mystery", "Brave", "Calm", "Wandering", "Happy", "Vocal"]
-NOUNS = ["Tiger", "River", "Banyan", "Peacock", "Lotus", "Eagle", "Lion", "Voice"]
+ADJECTIVES = ["Silent", "Hidden", "Mystery", "Brave", "Calm", "Wandering", "Happy", "Vocal", "Fast", "Wise"]
+NOUNS = ["Tiger", "River", "Banyan", "Peacock", "Lotus", "Eagle", "Lion", "Voice", "Horse", "Bear"]
 
 def generate_anonymous_name():
     return f"{random.choice(ADJECTIVES)} {random.choice(NOUNS)}"
@@ -243,7 +243,7 @@ async def get_user_details(user_id: str):
 
     return None, None, "User not found"
 
-# --- 0. CLEAR DATA (Utility Route - Optional) ---
+# --- 0. CLEAR DATA (Optional) ---
 @router.delete("/reset", status_code=200)
 async def reset_discussions():
     await db.discussions.delete_many({})
@@ -259,24 +259,35 @@ async def post_discussion(
     if error:
         raise HTTPException(status_code=404, detail=error)
 
-    # 1. Determine Identity & Village
     village_name = user["village_name"]
-    
+    display_name = ""
+
+    # --- PERMANENT IDENTITY LOGIC ---
     if role == "villager":
-        display_name = generate_anonymous_name()
+        # Check if they already have an alias
+        if "anonymous_identity" in user and user["anonymous_identity"]:
+            display_name = user["anonymous_identity"]
+        else:
+            # Generate NEW Permanent Identity
+            display_name = generate_anonymous_name()
+            # Save it to their profile forever
+            await db.villagers.update_one(
+                {"_id": user["_id"]},
+                {"\$set": {"anonymous_identity": display_name}}
+            )
     else:
-        # Officials show their real name
+        # Officials always use Real Name
         display_name = f"Official {user['name']}"
 
     new_post = {
-        "village_name": village_name,  # <--- CRITICAL: Village Filter
+        "village_name": village_name,
         "user_name": display_name,
         "user_role": role,
         "real_user_id": str(user["_id"]),
         "content": post.content,
         "category": post.category,
         "status": "Open",
-        "replies": [], # <--- Init empty replies
+        "replies": [],
         "created_at": datetime.utcnow(),
         "upvotes": 0
     }
@@ -302,9 +313,19 @@ async def add_comment(
     if error:
         raise HTTPException(status_code=404, detail=error)
 
-    # 2. Determine Identity
+    display_name = ""
+
+    # --- PERMANENT IDENTITY LOGIC (For Comments too) ---
     if role == "villager":
-        display_name = generate_anonymous_name()
+        if "anonymous_identity" in user and user["anonymous_identity"]:
+            display_name = user["anonymous_identity"]
+        else:
+            # If they comment first before posting, assign identity here too
+            display_name = generate_anonymous_name()
+            await db.villagers.update_one(
+                {"_id": user["_id"]},
+                {"\$set": {"anonymous_identity": display_name}}
+            )
     else:
         display_name = f"Official {user['name']}"
 
@@ -332,31 +353,25 @@ async def add_comment(
 
     return {"message": "Comment added", "identity": display_name}
 
-# --- 3. GET VILLAGE FEED (Filtered) ---
+# --- 3. GET VILLAGE FEED ---
 @router.get("/feed", response_model=list[DiscussionResponse])
 async def get_feed(
-    user_id: str = Query(..., description="ID of the logged-in user to fetch THEIR village feed"),
+    user_id: str = Query(..., description="ID of the logged-in user"),
     limit: int = 50
 ):
-    # 1. Get User's Village
     user, role, error = await get_user_details(user_id)
     if error:
         raise HTTPException(status_code=404, detail=error)
         
     village_name = user["village_name"]
 
-    # 2. Fetch Discussions ONLY for this village
     discussions = await db.discussions.find(
         {"village_name": village_name}
     ).sort("created_at", -1).limit(limit).to_list(limit)
     
     results = []
     for d in discussions:
-        # Convert replies if they exist
-        clean_replies = []
-        if "replies" in d:
-            clean_replies = d["replies"]
-
+        clean_replies = d.get("replies", [])
         results.append(DiscussionResponse(
             id=str(d["_id"]),
             village_name=d["village_name"],
@@ -404,49 +419,12 @@ async def get_latest_insight():
     return insight
 EOF
 
-# ==========================================
-# 3. Create Clean-up Script to Wipe Old Data
-# ==========================================
-echo "🧹 Creating 'reset_community.py' to wipe old data..."
-
-cat <<EOF > reset_community.py
-import asyncio
-import os
-from motor.motor_asyncio import AsyncIOMotorClient
-from dotenv import load_dotenv
-
-load_dotenv()
-MONGO_URI = os.getenv("MONGO_URI")
-DB_NAME = os.getenv("DB_NAME")
-
-async def reset_db():
-    if not MONGO_URI:
-        print("❌ Error: MONGO_URI not found.")
-        return
-
-    client = AsyncIOMotorClient(MONGO_URI)
-    db = client[DB_NAME]
-    
-    print("🔥 Deleting ALL existing discussions...")
-    await db.discussions.delete_many({})
-    print("✅ Discussions collection is now empty and ready for new schema.")
-
-if __name__ == "__main__":
-    asyncio.run(reset_db())
-EOF
-
 echo "---------------------------------------------------"
-echo "✅ SUCCESS: Village Discussion System Updated."
+echo "✅ SUCCESS: Permanent Identities Configured!"
 echo "---------------------------------------------------"
-echo "1. Run the reset script to clear old data:"
-echo "   python reset_community.py"
-echo ""
-echo "2. Restart the server:"
-echo "   ./run_server.sh"
-echo ""
-echo "👉 New Features:"
-echo "   - POST /community/discuss (Auto-detects village)"
-echo "   - POST /community/{id}/comment (Threading support)"
-echo "   - GET  /community/feed?user_id=... (Shows ONLY user's village)"
-echo "   - Officials appear as 'Official [Name]'"
+echo "👉 When a villager first posts, they are assigned a name."
+echo "   e.g., 'Silent Tiger'"
+echo "👉 This name is saved to their profile DB."
+echo "👉 All future posts/comments will use this same name."
 echo "---------------------------------------------------"
+echo "🔄 Please restart your server: ./run_server.sh"

@@ -9,8 +9,8 @@ from bson import ObjectId
 router = APIRouter(prefix="/community", tags=["Community Discussion"])
 
 # --- HELPER: Random Anonymizer ---
-ADJECTIVES = ["Silent", "Hidden", "Mystery", "Brave", "Calm", "Wandering", "Happy", "Vocal"]
-NOUNS = ["Tiger", "River", "Banyan", "Peacock", "Lotus", "Eagle", "Lion", "Voice"]
+ADJECTIVES = ["Silent", "Hidden", "Mystery", "Brave", "Calm", "Wandering", "Happy", "Vocal", "Fast", "Wise"]
+NOUNS = ["Tiger", "River", "Banyan", "Peacock", "Lotus", "Eagle", "Lion", "Voice", "Horse", "Bear"]
 
 def generate_anonymous_name():
     return f"{random.choice(ADJECTIVES)} {random.choice(NOUNS)}"
@@ -36,7 +36,7 @@ async def get_user_details(user_id: str):
 
     return None, None, "User not found"
 
-# --- 0. CLEAR DATA (Utility Route - Optional) ---
+# --- 0. CLEAR DATA (Optional) ---
 @router.delete("/reset", status_code=200)
 async def reset_discussions():
     await db.discussions.delete_many({})
@@ -52,24 +52,35 @@ async def post_discussion(
     if error:
         raise HTTPException(status_code=404, detail=error)
 
-    # 1. Determine Identity & Village
     village_name = user["village_name"]
-    
+    display_name = ""
+
+    # --- PERMANENT IDENTITY LOGIC ---
     if role == "villager":
-        display_name = generate_anonymous_name()
+        # Check if they already have an alias
+        if "anonymous_identity" in user and user["anonymous_identity"]:
+            display_name = user["anonymous_identity"]
+        else:
+            # Generate NEW Permanent Identity
+            display_name = generate_anonymous_name()
+            # Save it to their profile forever
+            await db.villagers.update_one(
+                {"_id": user["_id"]},
+                {"$set": {"anonymous_identity": display_name}}
+            )
     else:
-        # Officials show their real name
+        # Officials always use Real Name
         display_name = f"Official {user['name']}"
 
     new_post = {
-        "village_name": village_name,  # <--- CRITICAL: Village Filter
+        "village_name": village_name,
         "user_name": display_name,
         "user_role": role,
         "real_user_id": str(user["_id"]),
         "content": post.content,
         "category": post.category,
         "status": "Open",
-        "replies": [], # <--- Init empty replies
+        "replies": [],
         "created_at": datetime.utcnow(),
         "upvotes": 0
     }
@@ -95,9 +106,19 @@ async def add_comment(
     if error:
         raise HTTPException(status_code=404, detail=error)
 
-    # 2. Determine Identity
+    display_name = ""
+
+    # --- PERMANENT IDENTITY LOGIC (For Comments too) ---
     if role == "villager":
-        display_name = generate_anonymous_name()
+        if "anonymous_identity" in user and user["anonymous_identity"]:
+            display_name = user["anonymous_identity"]
+        else:
+            # If they comment first before posting, assign identity here too
+            display_name = generate_anonymous_name()
+            await db.villagers.update_one(
+                {"_id": user["_id"]},
+                {"$set": {"anonymous_identity": display_name}}
+            )
     else:
         display_name = f"Official {user['name']}"
 
@@ -125,31 +146,25 @@ async def add_comment(
 
     return {"message": "Comment added", "identity": display_name}
 
-# --- 3. GET VILLAGE FEED (Filtered) ---
+# --- 3. GET VILLAGE FEED ---
 @router.get("/feed", response_model=list[DiscussionResponse])
 async def get_feed(
-    user_id: str = Query(..., description="ID of the logged-in user to fetch THEIR village feed"),
+    user_id: str = Query(..., description="ID of the logged-in user"),
     limit: int = 50
 ):
-    # 1. Get User's Village
     user, role, error = await get_user_details(user_id)
     if error:
         raise HTTPException(status_code=404, detail=error)
         
     village_name = user["village_name"]
 
-    # 2. Fetch Discussions ONLY for this village
     discussions = await db.discussions.find(
         {"village_name": village_name}
     ).sort("created_at", -1).limit(limit).to_list(limit)
     
     results = []
     for d in discussions:
-        # Convert replies if they exist
-        clean_replies = []
-        if "replies" in d:
-            clean_replies = d["replies"]
-
+        clean_replies = d.get("replies", [])
         results.append(DiscussionResponse(
             id=str(d["_id"]),
             village_name=d["village_name"],
