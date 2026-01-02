@@ -52,33 +52,6 @@ class OfficialCreate(BaseModel):
     password: str
     role: str = "government_official"
 
-# --- Community Discussion Models ---
-class DiscussionCreate(BaseModel):
-    content: str
-    category: str = "General"
-    is_anonymous: bool = False
-
-class DiscussionResponse(BaseModel):
-    id: str
-    user_name: str
-    content: str
-    category: str
-    created_at: datetime
-    upvotes: int
-
-# --- AI Insight Models ---
-class InsightCreate(BaseModel):
-    period_start: datetime
-    period_end: datetime
-    summary: str
-    top_issues: list[str]
-    sentiment_score: float
-    suggested_actions: list[str]
-
-class InsightResponse(InsightCreate):
-    id: str
-    generated_at: datetime
-
 # --- User Response Schemas ---
 class VillagerResponse(BaseModel):
     id: str
@@ -111,6 +84,44 @@ class OfficialResponse(BaseModel):
     village_name: str
     role: str
     assigned_complaints: List[str] = []
+
+# --- Community Discussion Models (UPDATED) ---
+class DiscussionComment(BaseModel):
+    user_name: str
+    user_role: str
+    content: str
+    created_at: datetime
+
+class DiscussionCreate(BaseModel):
+    content: str
+    category: str = "General"
+
+class CommentCreate(BaseModel):
+    content: str
+
+class DiscussionResponse(BaseModel):
+    id: str
+    village_name: str
+    user_name: str
+    user_role: str
+    content: str
+    category: str
+    created_at: datetime
+    upvotes: int
+    replies: List[DiscussionComment] = [] # <--- Added Replies
+
+# --- AI Insight Models ---
+class InsightCreate(BaseModel):
+    period_start: datetime
+    period_end: datetime
+    summary: str
+    top_issues: list[str]
+    sentiment_score: float
+    suggested_actions: list[str]
+
+class InsightResponse(InsightCreate):
+    id: str
+    generated_at: datetime
 
 # --- Project Schemas ---
 class ProjectCreate(BaseModel):
@@ -164,7 +175,7 @@ class ProposedProjectResponse(BaseModel):
     status: str
     created_at: datetime
 
-# --- Complaint Schemas (UPDATED) ---
+# --- Complaint Schemas ---
 class ComplaintResponse(BaseModel):
     id: str
     complaint_name: str
@@ -173,5 +184,5 @@ class ComplaintResponse(BaseModel):
     status: str
     village_name: str
     villager_phone: str
-    attachments: List[str]  # <--- REPLACED photos/pdf with generic attachments list
+    attachments: List[str]
     created_at: datetime

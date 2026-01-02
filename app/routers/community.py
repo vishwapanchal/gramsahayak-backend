@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException, status, Query, Depends
+from fastapi import APIRouter, HTTPException, status, Query
 from app.database import db
-from app.schemas import DiscussionCreate, DiscussionResponse
+from app.schemas import DiscussionCreate, DiscussionResponse, CommentCreate
 from app.services.llm import analyze_complaints
 from datetime import datetime, timedelta
 import random
@@ -15,85 +15,159 @@ NOUNS = ["Tiger", "River", "Banyan", "Peacock", "Lotus", "Eagle", "Lion", "Voice
 def generate_anonymous_name():
     return f"{random.choice(ADJECTIVES)} {random.choice(NOUNS)}"
 
-# --- 1. POST A COMPLAINT ---
-@router.post("/discuss", status_code=status.HTTP_201_CREATED)
-async def post_complaint(
-    post: DiscussionCreate, 
-    villager_id: str = Query(..., description="The ID of the villager posting this")
-):
+async def get_user_details(user_id: str):
+    """
+    Identifies if the user is a Villager or Official and returns details.
+    """
     try:
-        user_obj_id = ObjectId(villager_id)
+        obj_id = ObjectId(user_id)
     except:
-        raise HTTPException(status_code=400, detail="Invalid User ID format")
+        return None, None, "Invalid ID"
 
-    is_villager = await db.villagers.find_one({"_id": user_obj_id})
+    # Check Villager
+    villager = await db.villagers.find_one({"_id": obj_id})
+    if villager:
+        return villager, "villager", None
+
+    # Check Official
+    official = await db.government_officials.find_one({"_id": obj_id})
+    if official:
+        return official, "official", None
+
+    return None, None, "User not found"
+
+# --- 0. CLEAR DATA (Utility Route - Optional) ---
+@router.delete("/reset", status_code=200)
+async def reset_discussions():
+    await db.discussions.delete_many({})
+    return {"message": "All discussions cleared."}
+
+# --- 1. POST A DISCUSSION (Filtered by Village) ---
+@router.post("/discuss", status_code=status.HTTP_201_CREATED)
+async def post_discussion(
+    post: DiscussionCreate, 
+    user_id: str = Query(..., description="ID of the Villager or Official")
+):
+    user, role, error = await get_user_details(user_id)
+    if error:
+        raise HTTPException(status_code=404, detail=error)
+
+    # 1. Determine Identity & Village
+    village_name = user["village_name"]
     
-    if not is_villager:
-        if await db.contractors.find_one({"_id": user_obj_id}) or            await db.government_officials.find_one({"_id": user_obj_id}):
-            raise HTTPException(status_code=403, detail="Only Villagers can post complaints.")
-        raise HTTPException(status_code=404, detail="Villager not found")
-
-    anon_name = generate_anonymous_name()
+    if role == "villager":
+        display_name = generate_anonymous_name()
+    else:
+        # Officials show their real name
+        display_name = f"Official {user['name']}"
 
     new_post = {
-        "user_name": anon_name,
-        "real_user_id": str(user_obj_id), # We store this to track 'Personal Impact'
+        "village_name": village_name,  # <--- CRITICAL: Village Filter
+        "user_name": display_name,
+        "user_role": role,
+        "real_user_id": str(user["_id"]),
         "content": post.content,
         "category": post.category,
-        "status": "Open",            # <--- New Status Field
+        "status": "Open",
+        "replies": [], # <--- Init empty replies
         "created_at": datetime.utcnow(),
         "upvotes": 0
     }
     
     result = await db.discussions.insert_one(new_post)
     
-    return {"message": "Complaint posted", "assigned_identity": anon_name, "id": str(result.inserted_id)}
+    return {
+        "message": "Posted successfully", 
+        "assigned_identity": display_name, 
+        "village": village_name,
+        "id": str(result.inserted_id)
+    }
 
-# --- 2. GET FEED (Only shows Open issues) ---
+# --- 2. ADD A COMMENT (Reply) ---
+@router.post("/{discussion_id}/comment", status_code=status.HTTP_201_CREATED)
+async def add_comment(
+    discussion_id: str,
+    comment: CommentCreate,
+    user_id: str = Query(..., description="ID of the User commenting")
+):
+    # 1. Validate User
+    user, role, error = await get_user_details(user_id)
+    if error:
+        raise HTTPException(status_code=404, detail=error)
+
+    # 2. Determine Identity
+    if role == "villager":
+        display_name = generate_anonymous_name()
+    else:
+        display_name = f"Official {user['name']}"
+
+    # 3. Create Reply Object
+    reply_obj = {
+        "user_name": display_name,
+        "user_role": role,
+        "content": comment.content,
+        "created_at": datetime.utcnow()
+    }
+
+    # 4. Update Discussion
+    try:
+        disc_oid = ObjectId(discussion_id)
+    except:
+        raise HTTPException(status_code=400, detail="Invalid Discussion ID")
+
+    result = await db.discussions.update_one(
+        {"_id": disc_oid},
+        {"$push": {"replies": reply_obj}}
+    )
+
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    return {"message": "Comment added", "identity": display_name}
+
+# --- 3. GET VILLAGE FEED (Filtered) ---
 @router.get("/feed", response_model=list[DiscussionResponse])
-async def get_feed(limit: int = 20):
-    # Only show non-resolved issues in the main feed? Or all? Let's show all.
-    discussions = await db.discussions.find().sort("created_at", -1).limit(limit).to_list(limit)
+async def get_feed(
+    user_id: str = Query(..., description="ID of the logged-in user to fetch THEIR village feed"),
+    limit: int = 50
+):
+    # 1. Get User's Village
+    user, role, error = await get_user_details(user_id)
+    if error:
+        raise HTTPException(status_code=404, detail=error)
+        
+    village_name = user["village_name"]
+
+    # 2. Fetch Discussions ONLY for this village
+    discussions = await db.discussions.find(
+        {"village_name": village_name}
+    ).sort("created_at", -1).limit(limit).to_list(limit)
     
     results = []
     for d in discussions:
+        # Convert replies if they exist
+        clean_replies = []
+        if "replies" in d:
+            clean_replies = d["replies"]
+
         results.append(DiscussionResponse(
             id=str(d["_id"]),
+            village_name=d["village_name"],
             user_name=d["user_name"],
+            user_role=d["user_role"],
             content=d["content"],
             category=d["category"],
             created_at=d["created_at"],
-            upvotes=d["upvotes"]
+            upvotes=d.get("upvotes", 0),
+            replies=clean_replies
         ))
     return results
 
-# --- 3. RESOLVE ISSUE (For Officials) ---
-@router.patch("/{discussion_id}/resolve")
-async def resolve_issue(discussion_id: str):
-    """
-    Marks a complaint as 'Resolved'. 
-    This increases the 'Personal Impact' score of the villager who posted it.
-    """
-    try:
-        obj_id = ObjectId(discussion_id)
-    except:
-        raise HTTPException(status_code=400, detail="Invalid ID")
-
-    result = await db.discussions.update_one(
-        {"_id": obj_id}, 
-        {"$set": {"status": "Resolved"}}
-    )
-    
-    if result.modified_count == 0:
-        raise HTTPException(status_code=404, detail="Discussion not found")
-        
-    return {"message": "Issue marked as Resolved"}
-
-# --- 4. ANALYZE & INSIGHTS (Existing Logic) ---
+# --- 4. ANALYZE & INSIGHTS ---
 @router.post("/analyze")
 async def trigger_analysis():
     last_week = datetime.utcnow() - timedelta(days=7)
-    posts = await db.discussions.find({"created_at": {"$gte": last_week}}).to_list(100)
+    posts = await db.discussions.find({"created_at": {"": last_week}}).to_list(100)
     
     if not posts: return {"message": "No data"}
     
