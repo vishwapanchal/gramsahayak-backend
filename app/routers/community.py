@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException, status, Query
+from fastapi import APIRouter, HTTPException, status, Query, UploadFile, File, Form
 from app.database import db
-from app.schemas import DiscussionCreate, DiscussionResponse, CommentCreate
+from app.schemas import DiscussionResponse, CommentCreate
 from app.services.llm import analyze_complaints
+from app.utils.s3 import upload_file_to_s3
 from datetime import datetime, timedelta
 import random
 from bson import ObjectId
@@ -42,10 +43,12 @@ async def reset_discussions():
     await db.discussions.delete_many({})
     return {"message": "All discussions cleared."}
 
-# --- 1. POST A DISCUSSION (Filtered by Village) ---
+# --- 1. POST A DISCUSSION (With Optional Image) ---
 @router.post("/discuss", status_code=status.HTTP_201_CREATED)
 async def post_discussion(
-    post: DiscussionCreate, 
+    content: str = Form(..., description="Content of the discussion"),
+    category: str = Form("General", description="Category of the post"),
+    image: UploadFile = File(None, description="Optional image upload"),
     user_id: str = Query(..., description="ID of the Villager or Official")
 ):
     user, role, error = await get_user_details(user_id)
@@ -72,17 +75,25 @@ async def post_discussion(
         # Officials always use Real Name
         display_name = f"Official {user['name']}"
 
+    # --- HANDLE IMAGE UPLOAD ---
+    image_url = None
+    if image:
+        # Use existing S3 utility (stored in same bucket, separate folder for tidiness)
+        image_url = upload_file_to_s3(image.file, image.filename, folder="community")
+
     new_post = {
         "village_name": village_name,
         "user_name": display_name,
         "user_role": role,
         "real_user_id": str(user["_id"]),
-        "content": post.content,
-        "category": post.category,
+        "content": content,
+        "category": category,
+        "image_url": image_url,  # Save URL to DB
         "status": "Open",
         "replies": [],
         "created_at": datetime.utcnow(),
-        "upvotes": 0
+        "upvotes": 0,
+        "upvoters": [] # Track who has upvoted
     }
     
     result = await db.discussions.insert_one(new_post)
@@ -91,10 +102,64 @@ async def post_discussion(
         "message": "Posted successfully", 
         "assigned_identity": display_name, 
         "village": village_name,
+        "image_url": image_url,
         "id": str(result.inserted_id)
     }
 
-# --- 2. ADD A COMMENT (Reply) ---
+# --- 2. UPVOTE A DISCUSSION (Toggle) ---
+@router.patch("/{discussion_id}/upvote")
+async def upvote_discussion(
+    discussion_id: str,
+    user_id: str = Query(..., description="ID of the user upvoting")
+):
+    # 1. Validate User
+    user, role, error = await get_user_details(user_id)
+    if error:
+        raise HTTPException(status_code=404, detail=error)
+    
+    # 2. Validate Discussion
+    try:
+        oid = ObjectId(discussion_id)
+    except:
+        raise HTTPException(status_code=400, detail="Invalid Discussion ID")
+
+    discussion = await db.discussions.find_one({"_id": oid})
+    if not discussion:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    # 3. Check Village Match (Must be same village)
+    if discussion["village_name"] != user["village_name"]:
+         raise HTTPException(status_code=403, detail="You can only upvote discussions in your own village")
+
+    # 4. TOGGLE UPVOTE LOGIC
+    user_oid = str(user["_id"])
+    upvoters = discussion.get("upvoters", [])
+
+    if user_oid in upvoters:
+        # User already upvoted -> REMOVE UPVOTE
+        await db.discussions.update_one(
+            {"_id": oid},
+            {
+                "$inc": {"upvotes": -1},
+                "$pull": {"upvoters": user_oid}
+            }
+        )
+        new_count = discussion.get("upvotes", 0) - 1
+        return {"message": "Upvote removed", "upvotes": new_count if new_count >= 0 else 0}
+    
+    else:
+        # User hasn't upvoted -> ADD UPVOTE
+        await db.discussions.update_one(
+            {"_id": oid},
+            {
+                "$inc": {"upvotes": 1},
+                "$push": {"upvoters": user_oid}
+            }
+        )
+        return {"message": "Upvoted successfully", "upvotes": discussion.get("upvotes", 0) + 1}
+
+
+# --- 3. ADD A COMMENT (Reply) ---
 @router.post("/{discussion_id}/comment", status_code=status.HTTP_201_CREATED)
 async def add_comment(
     discussion_id: str,
@@ -146,7 +211,7 @@ async def add_comment(
 
     return {"message": "Comment added", "identity": display_name}
 
-# --- 3. GET VILLAGE FEED ---
+# --- 4. GET VILLAGE FEED ---
 @router.get("/feed", response_model=list[DiscussionResponse])
 async def get_feed(
     user_id: str = Query(..., description="ID of the logged-in user"),
@@ -174,15 +239,16 @@ async def get_feed(
             category=d["category"],
             created_at=d["created_at"],
             upvotes=d.get("upvotes", 0),
-            replies=clean_replies
+            replies=clean_replies,
+            image_url=d.get("image_url")
         ))
     return results
 
-# --- 4. ANALYZE & INSIGHTS ---
+# --- 5. ANALYZE & INSIGHTS ---
 @router.post("/analyze")
 async def trigger_analysis():
     last_week = datetime.utcnow() - timedelta(days=7)
-    posts = await db.discussions.find({"created_at": {"": last_week}}).to_list(100)
+    posts = await db.discussions.find({"created_at": {"$gte": last_week}}).to_list(100)
     
     if not posts: return {"message": "No data"}
     
