@@ -1,296 +1,379 @@
 #!/bin/bash
 
-echo "🚀 Updating Community Router with Verified Upvote Logic..."
+echo "🚀 Updating Schema and User Router for Contractor Dashboard..."
 
 # ==========================================
-# Update Community Router (Safe Write)
+# 1. Update app/schemas.py
+#    - Adds ProjectSummary, ContractorStats
+#    - Adds ContractorDashboardResponse
 # ==========================================
-echo "📝 Writing 'app/routers/community.py'..."
+echo "📝 Updating 'app/schemas.py'..."
 
-cat <<'EOF' > app/routers/community.py
-from fastapi import APIRouter, HTTPException, status, Query, UploadFile, File, Form
+cat <<'EOF' > app/schemas.py
+from pydantic import BaseModel, EmailStr, Field, validator
+from typing import Optional, List
+from datetime import datetime
+
+# --- Villager Schemas ---
+class VillagerSignup(BaseModel):
+    name: str
+    gender: str
+    age: int
+    email: EmailStr
+    phone_number: str
+    village_name: str
+    taluk: str
+    district: str
+    state: str
+    password: str
+    role: str = "villager"
+
+    @validator('phone_number')
+    def validate_phone(cls, v):
+        if not v.isdigit() or len(v) != 10:
+            raise ValueError('Phone number must be exactly 10 digits')
+        return v
+
+class VillagerLogin(BaseModel):
+    phone_number: str
+    password: str
+
+# --- Contractor Schemas ---
+class ContractorLogin(BaseModel):
+    contractor_id: str
+    password: str
+
+class ContractorCreate(BaseModel):
+    name: str
+    email: EmailStr
+    phone_number: str
+    contractor_id: str
+    password: str
+    role: str = "contractor"
+
+# --- Government Official Schemas ---
+class OfficialLogin(BaseModel):
+    government_id: str
+    password: str
+
+class OfficialCreate(BaseModel):
+    name: str
+    email: EmailStr
+    government_id: str
+    village_name: str
+    password: str
+    role: str = "government_official"
+
+# --- User Response Schemas ---
+class VillagerResponse(BaseModel):
+    id: str
+    name: str
+    gender: str
+    age: int
+    email: EmailStr
+    phone_number: str
+    village_name: str
+    taluk: str
+    district: str
+    state: str
+    role: str
+    govt_official_id: Optional[str] = None
+    complaints_raised: List[str] = []
+    anonymous_identity: Optional[str] = None
+
+class ContractorResponse(BaseModel):
+    id: str
+    name: str
+    email: EmailStr
+    phone_number: str
+    contractor_id: str
+    role: str
+
+class OfficialResponse(BaseModel):
+    id: str
+    name: str
+    email: EmailStr
+    government_id: str
+    village_name: str
+    role: str
+    assigned_complaints: List[str] = []
+
+# --- Community Discussion Models ---
+class DiscussionComment(BaseModel):
+    user_name: str
+    user_role: str
+    content: str
+    created_at: datetime
+
+class DiscussionCreate(BaseModel):
+    content: str
+    category: str = "General"
+
+class CommentCreate(BaseModel):
+    content: str
+
+class DiscussionResponse(BaseModel):
+    id: str
+    village_name: str
+    user_name: str
+    user_role: str
+    content: str
+    category: str
+    created_at: datetime
+    upvotes: int
+    replies: List[DiscussionComment] = []
+    image_url: Optional[str] = None
+
+# --- AI Insight Models ---
+class InsightCreate(BaseModel):
+    period_start: datetime
+    period_end: datetime
+    summary: str
+    top_issues: list[str]
+    sentiment_score: float
+    suggested_actions: list[str]
+
+class InsightResponse(InsightCreate):
+    id: str
+    generated_at: datetime
+
+# --- Project Schemas ---
+class ProjectCreate(BaseModel):
+    project_name: str
+    description: str
+    category: str
+    village_name: str
+    location: str
+    contractor_name: str
+    contractor_id: str
+    contractor_address: str
+    allocated_budget: float
+    approved_by: str
+    start_date: datetime
+    due_date: datetime
+    status: str = "Pending"
+    images: list[str] = []
+
+class ProjectResponse(ProjectCreate):
+    id: str
+    created_at: datetime
+    milestones: list[str] = []
+
+# --- Dashboard Schemas ---
+class DashboardStats(BaseModel):
+    budget_used: float
+    issues_resolved: int
+    village_mood: str
+    personal_impact: int
+    next_meeting: str
+
+# --- Government Schemes Schemas ---
+class SchemeBase(BaseModel):
+    scheme_id: str
+    scheme_name: str
+    scheme_desc: str
+    scheme_dept: str
+
+class SchemeResponse(SchemeBase):
+    id: str
+
+# --- Proposed Projects Schemas ---
+class ProposedProjectCreate(BaseModel):
+    village_id: str
+    proposed_project_title: str
+
+class ProposedProjectResponse(BaseModel):
+    id: str
+    village_id: str
+    proposed_project_title: str
+    status: str
+    created_at: datetime
+
+# --- Complaint Schemas ---
+class ComplaintResponse(BaseModel):
+    id: str
+    complaint_name: str
+    complaint_desc: str
+    location: str
+    status: str
+    village_name: str
+    villager_phone: str
+    attachments: List[str]
+    created_at: datetime
+
+# ==========================================
+# NEW: CONTRACTOR DASHBOARD SCHEMAS
+# ==========================================
+
+class ProjectSummary(BaseModel):
+    id: str
+    project_name: str
+    status: str
+    allocated_budget: float
+    location: str
+    start_date: datetime
+
+class ContractorStats(BaseModel):
+    total_contract_value: float
+    active_projects_count: int
+    projects_completed_count: int
+    pending_issues_count: int
+
+class ContractorDashboardResponse(BaseModel):
+    id: str
+    name: str
+    email: str  # using str to avoid strict email validation errors
+    phone_number: str
+    contractor_id: str
+    role: str
+    
+    # New Dashboard Data
+    stats: ContractorStats
+    active_projects: List[ProjectSummary]
+EOF
+
+# ==========================================
+# 2. Update app/routers/users.py
+#    - Modifies get_contractor_by_id to fetch stats & projects
+# ==========================================
+echo "📝 Updating 'app/routers/users.py'..."
+
+cat <<'EOF' > app/routers/users.py
+from fastapi import APIRouter, HTTPException, status
 from app.database import db
-from app.schemas import DiscussionResponse, CommentCreate
-from app.services.llm import analyze_complaints
-from app.utils.s3 import upload_file_to_s3
-from datetime import datetime, timedelta
-import random
-from bson import ObjectId
+from app.schemas import (
+    VillagerResponse, 
+    ContractorResponse, 
+    OfficialResponse, 
+    ContractorDashboardResponse
+)
+from typing import List
 
-router = APIRouter(prefix="/community", tags=["Community Discussion"])
+router = APIRouter(prefix="/users", tags=["User Management"])
 
-# --- HELPER: Random Anonymizer ---
-ADJECTIVES = ["Silent", "Hidden", "Mystery", "Brave", "Calm", "Wandering", "Happy", "Vocal", "Fast", "Wise"]
-NOUNS = ["Tiger", "River", "Banyan", "Peacock", "Lotus", "Eagle", "Lion", "Voice", "Horse", "Bear"]
+# ==========================
+# 1. FETCH ALL USERS
+# ==========================
 
-def generate_anonymous_name():
-    return f"{random.choice(ADJECTIVES)} {random.choice(NOUNS)}"
+@router.get("/villagers", response_model=List[VillagerResponse])
+async def get_all_villagers():
+    """Fetch all registered villagers with full details"""
+    users = await db.villagers.find().to_list(1000)
+    for user in users:
+        user["id"] = str(user["_id"])
+        # Ensure optional list fields exist if DB record is old
+        if "complaints_raised" not in user:
+            user["complaints_raised"] = []
+    return users
 
-async def get_user_details(user_id: str):
+@router.get("/contractors", response_model=List[ContractorResponse])
+async def get_all_contractors():
+    """Fetch all registered contractors"""
+    users = await db.contractors.find().to_list(1000)
+    for user in users:
+        user["id"] = str(user["_id"])
+    return users
+
+@router.get("/officials", response_model=List[OfficialResponse])
+async def get_all_officials():
+    """Fetch all officials with assigned complaints"""
+    users = await db.government_officials.find().to_list(1000)
+    for user in users:
+        user["id"] = str(user["_id"])
+        # Ensure optional list fields exist
+        if "assigned_complaints" not in user:
+            user["assigned_complaints"] = []
+    return users
+
+# ==========================
+# 2. FETCH SINGLE USER
+# ==========================
+
+@router.get("/villagers/{phone_number}", response_model=VillagerResponse)
+async def get_villager_by_phone(phone_number: str):
+    """Fetch a single villager by Phone Number"""
+    user = await db.villagers.find_one({"phone_number": phone_number})
+    if not user:
+        raise HTTPException(status_code=404, detail="Villager not found")
+    
+    user["id"] = str(user["_id"])
+    if "complaints_raised" not in user:
+        user["complaints_raised"] = []
+    return user
+
+@router.get("/contractors/{contractor_id}", response_model=ContractorDashboardResponse)
+async def get_contractor_by_id(contractor_id: str):
     """
-    Identifies if the user is a Villager or Official and returns details.
+    Fetch contractor profile + dashboard stats + active projects
     """
-    try:
-        obj_id = ObjectId(user_id)
-    except:
-        return None, None, "Invalid ID"
+    # 1. Fetch Contractor Profile
+    user = await db.contractors.find_one({"contractor_id": contractor_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="Contractor not found")
+    
+    user["id"] = str(user["_id"])
 
-    # Check Villager
-    villager = await db.villagers.find_one({"_id": obj_id})
-    if villager:
-        return villager, "villager", None
+    # 2. Fetch Projects assigned to this Contractor
+    cursor = db.projects.find({"contractor_id": contractor_id})
+    projects_list = await cursor.to_list(length=1000)
 
-    # Check Official
-    official = await db.government_officials.find_one({"_id": obj_id})
-    if official:
-        return official, "official", None
+    # 3. Calculate Dashboard Statistics
+    total_value = 0.0
+    active_count = 0
+    completed_count = 0
+    active_projects_data = []
 
-    return None, None, "User not found"
+    for p in projects_list:
+        p_status = p.get("status", "Pending")
+        budget = float(p.get("allocated_budget", 0))
 
-# --- 0. CLEAR DATA (Optional) ---
-@router.delete("/reset", status_code=200)
-async def reset_discussions():
-    await db.discussions.delete_many({})
-    return {"message": "All discussions cleared."}
+        # Sum up total contract value
+        total_value += budget
 
-# --- 1. POST A DISCUSSION (With Optional Image) ---
-@router.post("/discuss", status_code=status.HTTP_201_CREATED)
-async def post_discussion(
-    content: str = Form(..., description="Content of the discussion"),
-    category: str = Form("General", description="Category of the post"),
-    image: UploadFile = File(None, description="Optional image upload"),
-    user_id: str = Query(..., description="ID of the Villager or Official")
-):
-    user, role, error = await get_user_details(user_id)
-    if error:
-        raise HTTPException(status_code=404, detail=error)
-
-    village_name = user["village_name"]
-    display_name = ""
-
-    # --- PERMANENT IDENTITY LOGIC ---
-    if role == "villager":
-        # Check if they already have an alias
-        if "anonymous_identity" in user and user["anonymous_identity"]:
-            display_name = user["anonymous_identity"]
+        # Count Active vs Completed
+        if p_status == "Completed":
+            completed_count += 1
         else:
-            # Generate NEW Permanent Identity
-            display_name = generate_anonymous_name()
-            # Save it to their profile forever
-            await db.villagers.update_one(
-                {"_id": user["_id"]},
-                {"$set": {"anonymous_identity": display_name}}
-            )
-    else:
-        # Officials always use Real Name
-        display_name = f"Official {user['name']}"
+            active_count += 1
+            # Add to the list of active projects
+            active_projects_data.append({
+                "id": str(p["_id"]),
+                "project_name": p.get("project_name", "Untitled Project"),
+                "status": p_status,
+                "allocated_budget": budget,
+                "location": p.get("location", "Unknown"),
+                "start_date": p.get("start_date")
+            })
 
-    # --- HANDLE IMAGE UPLOAD ---
-    image_url = None
-    if image:
-        # Use existing S3 utility (stored in same bucket, separate folder for tidiness)
-        image_url = upload_file_to_s3(image.file, image.filename, folder="community")
-
-    new_post = {
-        "village_name": village_name,
-        "user_name": display_name,
-        "user_role": role,
-        "real_user_id": str(user["_id"]),
-        "content": content,
-        "category": category,
-        "image_url": image_url,  # Save URL to DB
-        "status": "Open",
-        "replies": [],
-        "created_at": datetime.utcnow(),
-        "upvotes": 0,
-        "upvoters": [] # Track who has upvoted
-    }
-    
-    result = await db.discussions.insert_one(new_post)
-    
-    return {
-        "message": "Posted successfully", 
-        "assigned_identity": display_name, 
-        "village": village_name,
-        "image_url": image_url,
-        "id": str(result.inserted_id)
+    # 4. Construct the Final Response
+    response_data = {
+        **user,
+        "stats": {
+            "total_contract_value": total_value,
+            "active_projects_count": active_count,
+            "projects_completed_count": completed_count,
+            "pending_issues_count": 0  # Placeholder
+        },
+        "active_projects": active_projects_data
     }
 
-# --- 2. UPVOTE A DISCUSSION (Toggle) ---
-@router.patch("/{discussion_id}/upvote")
-async def upvote_discussion(
-    discussion_id: str,
-    user_id: str = Query(..., description="ID of the user upvoting")
-):
-    # 1. Validate User
-    user, role, error = await get_user_details(user_id)
-    if error:
-        raise HTTPException(status_code=404, detail=error)
+    return response_data
+
+@router.get("/officials/{government_id}", response_model=OfficialResponse)
+async def get_official_by_id(government_id: str):
+    """Fetch a single official by Government ID"""
+    user = await db.government_officials.find_one({"government_id": government_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="Official not found")
     
-    # 2. Validate Discussion
-    try:
-        oid = ObjectId(discussion_id)
-    except:
-        raise HTTPException(status_code=400, detail="Invalid Discussion ID")
-
-    discussion = await db.discussions.find_one({"_id": oid})
-    if not discussion:
-        raise HTTPException(status_code=404, detail="Discussion not found")
-
-    # 3. Check Village Match (Must be same village)
-    if discussion["village_name"] != user["village_name"]:
-         raise HTTPException(status_code=403, detail="You can only upvote discussions in your own village")
-
-    # 4. TOGGLE UPVOTE LOGIC
-    user_oid = str(user["_id"])
-    upvoters = discussion.get("upvoters", [])
-
-    if user_oid in upvoters:
-        # User already upvoted -> REMOVE UPVOTE
-        await db.discussions.update_one(
-            {"_id": oid},
-            {
-                "$inc": {"upvotes": -1},
-                "$pull": {"upvoters": user_oid}
-            }
-        )
-        new_count = discussion.get("upvotes", 0) - 1
-        return {"message": "Upvote removed", "upvotes": new_count if new_count >= 0 else 0}
-    
-    else:
-        # User hasn't upvoted -> ADD UPVOTE
-        await db.discussions.update_one(
-            {"_id": oid},
-            {
-                "$inc": {"upvotes": 1},
-                "$push": {"upvoters": user_oid}
-            }
-        )
-        return {"message": "Upvoted successfully", "upvotes": discussion.get("upvotes", 0) + 1}
-
-
-# --- 3. ADD A COMMENT (Reply) ---
-@router.post("/{discussion_id}/comment", status_code=status.HTTP_201_CREATED)
-async def add_comment(
-    discussion_id: str,
-    comment: CommentCreate,
-    user_id: str = Query(..., description="ID of the User commenting")
-):
-    # 1. Validate User
-    user, role, error = await get_user_details(user_id)
-    if error:
-        raise HTTPException(status_code=404, detail=error)
-
-    display_name = ""
-
-    # --- PERMANENT IDENTITY LOGIC (For Comments too) ---
-    if role == "villager":
-        if "anonymous_identity" in user and user["anonymous_identity"]:
-            display_name = user["anonymous_identity"]
-        else:
-            # If they comment first before posting, assign identity here too
-            display_name = generate_anonymous_name()
-            await db.villagers.update_one(
-                {"_id": user["_id"]},
-                {"$set": {"anonymous_identity": display_name}}
-            )
-    else:
-        display_name = f"Official {user['name']}"
-
-    # 3. Create Reply Object
-    reply_obj = {
-        "user_name": display_name,
-        "user_role": role,
-        "content": comment.content,
-        "created_at": datetime.utcnow()
-    }
-
-    # 4. Update Discussion
-    try:
-        disc_oid = ObjectId(discussion_id)
-    except:
-        raise HTTPException(status_code=400, detail="Invalid Discussion ID")
-
-    result = await db.discussions.update_one(
-        {"_id": disc_oid},
-        {"$push": {"replies": reply_obj}}
-    )
-
-    if result.modified_count == 0:
-        raise HTTPException(status_code=404, detail="Discussion not found")
-
-    return {"message": "Comment added", "identity": display_name}
-
-# --- 4. GET VILLAGE FEED ---
-@router.get("/feed", response_model=list[DiscussionResponse])
-async def get_feed(
-    user_id: str = Query(..., description="ID of the logged-in user"),
-    limit: int = 50
-):
-    user, role, error = await get_user_details(user_id)
-    if error:
-        raise HTTPException(status_code=404, detail=error)
-        
-    village_name = user["village_name"]
-
-    discussions = await db.discussions.find(
-        {"village_name": village_name}
-    ).sort("created_at", -1).limit(limit).to_list(limit)
-    
-    results = []
-    for d in discussions:
-        clean_replies = d.get("replies", [])
-        results.append(DiscussionResponse(
-            id=str(d["_id"]),
-            village_name=d["village_name"],
-            user_name=d["user_name"],
-            user_role=d["user_role"],
-            content=d["content"],
-            category=d["category"],
-            created_at=d["created_at"],
-            upvotes=d.get("upvotes", 0),
-            replies=clean_replies,
-            image_url=d.get("image_url")
-        ))
-    return results
-
-# --- 5. ANALYZE & INSIGHTS ---
-@router.post("/analyze")
-async def trigger_analysis():
-    last_week = datetime.utcnow() - timedelta(days=7)
-    posts = await db.discussions.find({"created_at": {"$gte": last_week}}).to_list(100)
-    
-    if not posts: return {"message": "No data"}
-    
-    text_data = "\n".join([f"- [{p['category']}] {p['content']}" for p in posts])
-    analysis = await analyze_complaints(text_data)
-    
-    if not analysis: raise HTTPException(status_code=500, detail="AI Failed")
-
-    insight = {
-        "period_start": last_week,
-        "period_end": datetime.utcnow(),
-        "generated_at": datetime.utcnow(),
-        "summary": analysis.get("summary", ""),
-        "top_issues": analysis.get("top_issues", []),
-        "sentiment_score": analysis.get("sentiment_score", 0),
-        "suggested_actions": analysis.get("suggested_actions", [])
-    }
-    await db.insights.insert_one(insight)
-    return {"message": "Analysis Done", "insight": insight}
-
-@router.get("/insights/latest")
-async def get_latest_insight():
-    insight = await db.insights.find_one(sort=[("generated_at", -1)])
-    if not insight: return {"message": "No insights"}
-    insight["id"] = str(insight["_id"])
-    del insight["_id"]
-    return insight
+    user["id"] = str(user["_id"])
+    if "assigned_complaints" not in user:
+        user["assigned_complaints"] = []
+    return user
 EOF
 
 echo "---------------------------------------------------"
-echo "✅ SUCCESS: Community Router Updated!"
+echo "✅ SUCCESS: Schemas and Contractor Router Updated!"
 echo "---------------------------------------------------"
-echo "👉 Logic verified: Upvotes toggle (+1/-1), restricted to village, max 1 per user."
-echo "👉 File rewritten successfully using safe write mode."
+echo "👉 You can now call GET /users/contractors/{id} to get the full dashboard data."
 echo "---------------------------------------------------"

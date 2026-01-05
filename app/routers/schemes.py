@@ -27,3 +27,4 @@ async def get_scheme_by_id(scheme_id: str):
         raise HTTPException(status_code=404, detail="Scheme not found")
     scheme["id"] = str(scheme["_id"])
     return scheme
+

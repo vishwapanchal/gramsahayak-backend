@@ -60,7 +60,21 @@ async def get_all_projects(
         results.append(p)
     return results
 
-# --- 3. GET SINGLE PROJECT (Public) ---
+# --- 3. GET PROJECTS BY CONTRACTOR (New Route) ---
+@router.get("/contractor/{contractor_id}", response_model=List[ProjectResponse])
+async def get_projects_by_contractor(contractor_id: str):
+    """
+    Fetch all projects assigned to a specific contractor by their Contractor ID.
+    """
+    projects = await db.projects.find({"contractor_id": contractor_id}).sort("created_at", -1).to_list(100)
+    
+    results = []
+    for p in projects:
+        p["id"] = str(p["_id"])
+        results.append(p)
+    return results
+
+# --- 4. GET SINGLE PROJECT (Public) ---
 @router.get("/{project_id}", response_model=ProjectResponse)
 async def get_project(project_id: str):
     try:
@@ -75,7 +89,7 @@ async def get_project(project_id: str):
     project["id"] = str(project["_id"])
     return project
 
-# --- 4. UPDATE STATUS (Restricted) ---
+# --- 5. UPDATE STATUS (Restricted) ---
 @router.patch("/{project_id}/status")
 async def update_status(
     project_id: str, 

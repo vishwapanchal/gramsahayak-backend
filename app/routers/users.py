@@ -1,6 +1,11 @@
 from fastapi import APIRouter, HTTPException, status
 from app.database import db
-from app.schemas import VillagerResponse, ContractorResponse, OfficialResponse
+from app.schemas import (
+    VillagerResponse, 
+    ContractorResponse, 
+    OfficialResponse, 
+    ContractorDashboardResponse
+)
 from typing import List
 
 router = APIRouter(prefix="/users", tags=["User Management"])
@@ -55,15 +60,63 @@ async def get_villager_by_phone(phone_number: str):
         user["complaints_raised"] = []
     return user
 
-@router.get("/contractors/{contractor_id}", response_model=ContractorResponse)
+@router.get("/contractors/{contractor_id}", response_model=ContractorDashboardResponse)
 async def get_contractor_by_id(contractor_id: str):
-    """Fetch a single contractor by ID"""
+    """
+    Fetch contractor profile + dashboard stats + active projects
+    """
+    # 1. Fetch Contractor Profile
     user = await db.contractors.find_one({"contractor_id": contractor_id})
     if not user:
         raise HTTPException(status_code=404, detail="Contractor not found")
     
     user["id"] = str(user["_id"])
-    return user
+
+    # 2. Fetch Projects assigned to this Contractor
+    cursor = db.projects.find({"contractor_id": contractor_id})
+    projects_list = await cursor.to_list(length=1000)
+
+    # 3. Calculate Dashboard Statistics
+    total_value = 0.0
+    active_count = 0
+    completed_count = 0
+    active_projects_data = []
+
+    for p in projects_list:
+        p_status = p.get("status", "Pending")
+        budget = float(p.get("allocated_budget", 0))
+
+        # Sum up total contract value
+        total_value += budget
+
+        # Count Active vs Completed
+        if p_status == "Completed":
+            completed_count += 1
+        else:
+            active_count += 1
+            # Add to the list of active projects
+            active_projects_data.append({
+                "id": str(p["_id"]),
+                "project_name": p.get("project_name", "Untitled Project"),
+                "status": p_status,
+                "allocated_budget": budget,
+                "location": p.get("location", "Unknown"),
+                "start_date": p.get("start_date")
+            })
+
+    # 4. Construct the Final Response
+    response_data = {
+        **user,
+        "stats": {
+            "total_contract_value": total_value,
+            "active_projects_count": active_count,
+            "projects_completed_count": completed_count,
+            "pending_issues_count": 0  # Placeholder
+        },
+        "active_projects": active_projects_data
+    }
+
+    return response_data
 
 @router.get("/officials/{government_id}", response_model=OfficialResponse)
 async def get_official_by_id(government_id: str):

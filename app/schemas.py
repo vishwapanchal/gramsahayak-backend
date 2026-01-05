@@ -188,3 +188,33 @@ class ComplaintResponse(BaseModel):
     villager_phone: str
     attachments: List[str]
     created_at: datetime
+
+# ==========================================
+# NEW: CONTRACTOR DASHBOARD SCHEMAS
+# ==========================================
+
+class ProjectSummary(BaseModel):
+    id: str
+    project_name: str
+    status: str
+    allocated_budget: float
+    location: str
+    start_date: datetime
+
+class ContractorStats(BaseModel):
+    total_contract_value: float
+    active_projects_count: int
+    projects_completed_count: int
+    pending_issues_count: int
+
+class ContractorDashboardResponse(BaseModel):
+    id: str
+    name: str
+    email: str  # using str to avoid strict email validation errors
+    phone_number: str
+    contractor_id: str
+    role: str
+    
+    # New Dashboard Data
+    stats: ContractorStats
+    active_projects: List[ProjectSummary]
