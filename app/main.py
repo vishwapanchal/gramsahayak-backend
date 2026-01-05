@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.database import db
 from app.routers import (
+    project_chat,
     auth, 
     community, 
     users, 
@@ -11,7 +12,7 @@ from app.routers import (
     schemes, 
     proposals, 
     complaints,
-    project_discussions  # <--- Added Import
+    secure_chat
 )
 import pymongo
 
@@ -26,13 +27,9 @@ async def lifespan(app: FastAPI):
     await db.government_officials.create_index([("government_id", pymongo.ASCENDING)], unique=True)
     await db.schemes.create_index([("scheme_id", pymongo.ASCENDING)], unique=True)
     
-    # Rapid Feed Fetching
+    # Rapid Feed Fetching (Descending Order on Time)
     await db.discussions.create_index([("created_at", pymongo.DESCENDING)])
-    
-    # Project Chat Index (New)
-    await db.project_discussions.create_index([("project_id", pymongo.ASCENDING), ("created_at", pymongo.ASCENDING)])
-    
-    print("✅ Database Indexes Checked/Created.")
+    print("✅ 'discussions' index created (Fast Feed Enabled).")
     
     yield
 
@@ -55,7 +52,8 @@ app.include_router(dashboard.router)
 app.include_router(schemes.router)
 app.include_router(proposals.router)
 app.include_router(complaints.router)
-app.include_router(project_discussions.router) # <--- Added Router
+app.include_router(secure_chat.router)
+app.include_router(project_chat.router)
 
 @app.get("/")
 async def root():

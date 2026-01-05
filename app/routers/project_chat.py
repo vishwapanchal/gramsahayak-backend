@@ -1,13 +1,3 @@
-#!/bin/bash
-
-echo "🚀 Setting up Project-Based Chat Router (Matching your Logs)..."
-
-# ==========================================
-# 1. Create app/routers/project_chat.py
-# ==========================================
-echo "📝 Creating 'app/routers/project_chat.py'..."
-
-cat <<'EOF' > app/routers/project_chat.py
 from fastapi import APIRouter, HTTPException, status, Query
 from app.database import db
 from pydantic import BaseModel
@@ -111,59 +101,3 @@ async def get_project_chat_history(
         m["id"] = str(m["_id"])
         results.append(m)
     return results
-EOF
-
-# ==========================================
-# 2. Register Router in app/main.py
-# ==========================================
-echo "🔗 Registering '/project-chat' in 'app/main.py'..."
-
-# Using Python script to safely patch main.py
-python3 -c "
-import sys
-
-try:
-    with open('app/main.py', 'r') as f:
-        content = f.read()
-
-    if 'project_chat' in content:
-        print('✅ Router already registered. Skipping.')
-        sys.exit(0)
-
-    # Add Import
-    content = content.replace(
-        'from app.routers import (',
-        'from app.routers import (\n    project_chat,'
-    )
-
-    # Add Include Router
-    # We append it after secure_chat or at the end of the router list
-    if 'app.include_router(secure_chat.router)' in content:
-        content = content.replace(
-            'app.include_router(secure_chat.router)',
-            'app.include_router(secure_chat.router)\napp.include_router(project_chat.router)'
-        )
-    elif 'app.include_router(complaints.router)' in content:
-        content = content.replace(
-            'app.include_router(complaints.router)',
-            'app.include_router(complaints.router)\napp.include_router(project_chat.router)'
-        )
-    else:
-        content += '\napp.include_router(project_chat.router)'
-
-    with open('app/main.py', 'w') as f:
-        f.write(content)
-    
-    print('✅ app/main.py updated successfully.')
-
-except Exception as e:
-    print(f'❌ Error patching main.py: {e}')
-"
-
-echo "---------------------------------------------------"
-echo "✅ FIXED: Project Chat API matches your Logs!"
-echo "---------------------------------------------------"
-echo "Endpoints Available:"
-echo "1. POST /project-chat/send (Body: project_id, sender_id, role, content)"
-echo "2. GET /project-chat/{project_id}?user_id=...&role=..."
-echo "---------------------------------------------------"
