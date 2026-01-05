@@ -218,3 +218,21 @@ class ContractorDashboardResponse(BaseModel):
     # New Dashboard Data
     stats: ContractorStats
     active_projects: List[ProjectSummary]
+
+# ==========================================
+# NEW: PROJECT DISCUSSION SCHEMAS
+# ==========================================
+class ProjectChatCreate(BaseModel):
+    project_id: str
+    sender_id: str
+    sender_role: str  # "contractor" or "official"
+    content: str
+
+class ProjectChatResponse(BaseModel):
+    id: str
+    project_id: str
+    sender_id: str
+    sender_role: str
+    sender_name: str
+    content: str
+    created_at: datetime

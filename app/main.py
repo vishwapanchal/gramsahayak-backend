@@ -10,7 +10,8 @@ from app.routers import (
     dashboard, 
     schemes, 
     proposals, 
-    complaints
+    complaints,
+    project_discussions  # <--- Added Import
 )
 import pymongo
 
@@ -25,9 +26,13 @@ async def lifespan(app: FastAPI):
     await db.government_officials.create_index([("government_id", pymongo.ASCENDING)], unique=True)
     await db.schemes.create_index([("scheme_id", pymongo.ASCENDING)], unique=True)
     
-    # Rapid Feed Fetching (Descending Order on Time)
+    # Rapid Feed Fetching
     await db.discussions.create_index([("created_at", pymongo.DESCENDING)])
-    print("✅ 'discussions' index created (Fast Feed Enabled).")
+    
+    # Project Chat Index (New)
+    await db.project_discussions.create_index([("project_id", pymongo.ASCENDING), ("created_at", pymongo.ASCENDING)])
+    
+    print("✅ Database Indexes Checked/Created.")
     
     yield
 
@@ -50,6 +55,7 @@ app.include_router(dashboard.router)
 app.include_router(schemes.router)
 app.include_router(proposals.router)
 app.include_router(complaints.router)
+app.include_router(project_discussions.router) # <--- Added Router
 
 @app.get("/")
 async def root():
