@@ -1,13 +1,56 @@
 #!/bin/bash
 
-echo "🚀 FINAL FIX: Applying Correct Router URL & Switching to Ungated Model..."
+echo "🚀 Fixing Hugging Face API URL & Updating RAG Service..."
 
 # ==========================================
-# Rewrite RAG Service with Verified Router URL
+# 1. Update Requirements (Bump versions)
+# ==========================================
+echo "📦 Updating requirements.txt..."
+
+# We ensure 'huggingface-hub' is at least 0.23.0 to handle the new router URL
+cat <<'TXT' > requirements.txt
+annotated-doc==0.0.4
+annotated-types==0.7.0
+anyio==4.12.0
+click==8.3.1
+colorama==0.4.6
+dnspython==2.8.0
+email-validator==2.1.0.post1
+fastapi==0.128.0
+h11==0.16.0
+httptools==0.7.1
+idna==3.11
+motor==3.7.1
+pydantic==2.12.5
+pydantic_core==2.41.5
+pymongo==4.15.5
+python-dotenv==1.2.1
+PyYAML==6.0.3
+starlette==0.50.0
+typing-inspection==0.4.2
+typing_extensions==4.15.0
+uvicorn==0.40.0
+watchfiles==1.1.1
+websockets==15.0.1
+passlib==1.7.4
+bcrypt>=4.0.1
+python-multipart
+# --- RAG & AI Dependencies ---
+langchain==0.1.20
+langchain-community==0.0.38
+langchain-core==0.1.52
+langchain-huggingface>=0.0.3
+chromadb==0.4.22
+sentence-transformers==2.7.0
+huggingface-hub>=0.23.2
+TXT
+
+# ==========================================
+# 2. Rewrite RAG Service (Use langchain_huggingface)
 # ==========================================
 echo "🧠 Rewriting 'app/services/rag_service.py'..."
 
-cat <<'EOF' > app/services/rag_service.py
+cat <<'PY' > app/services/rag_service.py
 import os
 from dotenv import load_dotenv
 from langchain_community.vectorstores import Chroma
@@ -22,23 +65,16 @@ load_dotenv()
 VECTOR_DB_PATH = "./chroma_db"
 HF_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 
-if not HF_TOKEN:
-    print("❌ ERROR: HUGGINGFACEHUB_API_TOKEN is missing from .env!")
-
 # 1. Initialize Embeddings (Runs Locally on CPU - Free)
-# Using a standard, small model for speed.
 print("📥 Loading Embedding Model (all-MiniLM-L6-v2)...")
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
-# 2. Initialize LLM (Hugging Face Free Serverless Inference)
-# MODEL: google/gemma-2-9b-it (New, Ungated, Reliable on Free Tier)
-model_id = "google/gemma-2-9b-it"
-
-# URL FIX: The new router requires '/hf-inference/models/' in the path
-new_api_url = f"https://router.huggingface.co/hf-inference/models/{model_id}"
+# 2. Initialize LLM (Hugging Face Free Inference API)
+# We use Zephyr-7b-beta because it is highly reliable on the free tier.
+repo_id = "HuggingFaceH4/zephyr-7b-beta"
 
 llm = HuggingFaceEndpoint(
-    endpoint_url=new_api_url,  # <--- Corrected Router URL
+    repo_id=repo_id,
     task="text-generation",
     max_new_tokens=512,
     do_sample=False,
@@ -124,11 +160,15 @@ async def generate_smart_summary(query: str):
         return result["result"]
     except Exception as e:
         return f"Error from Hugging Face API: {str(e)}"
-EOF
+PY
 
 echo "---------------------------------------------------"
-echo "✅ FIXED: Using 'google/gemma-2-9b-it' & Correct Router URL"
+echo "✅ Code Updated! Now updating dependencies..."
 echo "---------------------------------------------------"
-echo "👉 Restart your server: uvicorn app.main:app --reload"
-echo "👉 Then run: POST /community/rag/sync"
+
+pip install -r requirements.txt
+
+echo "---------------------------------------------------"
+echo "🎉 Fix Complete. Restart your server:"
+echo "   uvicorn app.main:app --reload"
 echo "---------------------------------------------------"

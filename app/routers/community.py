@@ -279,3 +279,34 @@ async def get_latest_insight():
     insight["id"] = str(insight["_id"])
     del insight["_id"]
     return insight
+
+# --- 6. RAG SYSTEM ENDPOINTS (Free HF) ---
+from app.services.rag_service import sync_discussions_to_vector_db, generate_smart_summary
+from pydantic import BaseModel
+
+class RagQuery(BaseModel):
+    query: str
+
+@router.post("/rag/sync", tags=["RAG AI"])
+async def sync_knowledge_base():
+    """
+    Re-builds the AI memory from current discussions.
+    """
+    return await sync_discussions_to_vector_db()
+
+@router.post("/rag/ask", tags=["RAG AI"])
+async def ask_village_data(request: RagQuery):
+    """
+    Ask the AI about village issues.
+    """
+    answer = await generate_smart_summary(request.query)
+    return {"answer": answer}
+
+@router.get("/rag/major-issues", tags=["RAG AI"])
+async def get_major_issues_report():
+    """
+    Auto-generates a report on Major Problems.
+    """
+    query = "Summarize the top 3 most critical recurring problems in the village and suggest 1 action for each."
+    answer = await generate_smart_summary(query)
+    return {"report": answer}
