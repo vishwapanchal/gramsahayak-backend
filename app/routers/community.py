@@ -3,11 +3,14 @@ from app.database import db
 from app.schemas import DiscussionResponse, CommentCreate
 from app.services.llm import analyze_complaints
 from app.utils.s3 import upload_file_to_s3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import random
 from bson import ObjectId
 
 router = APIRouter(prefix="/community", tags=["Community Discussion"])
+
+# --- CONSTANTS ---
+IST = timezone(timedelta(hours=5, minutes=30))
 
 # --- HELPER: Random Anonymizer ---
 ADJECTIVES = ["Silent", "Hidden", "Mystery", "Brave", "Calm", "Wandering", "Happy", "Vocal", "Fast", "Wise"]
@@ -91,7 +94,7 @@ async def post_discussion(
         "image_url": image_url,  # Save URL to DB
         "status": "Open",
         "replies": [],
-        "created_at": datetime.utcnow(),
+        "created_at": datetime.now(IST), # <--- IST TIMESTAMP
         "upvotes": 0,
         "upvoters": [] # Track who has upvoted
     }
@@ -192,7 +195,7 @@ async def add_comment(
         "user_name": display_name,
         "user_role": role,
         "content": comment.content,
-        "created_at": datetime.utcnow()
+        "created_at": datetime.now(IST) # <--- IST TIMESTAMP
     }
 
     # 4. Update Discussion
@@ -247,7 +250,7 @@ async def get_feed(
 # --- 5. ANALYZE & INSIGHTS ---
 @router.post("/analyze")
 async def trigger_analysis():
-    last_week = datetime.utcnow() - timedelta(days=7)
+    last_week = datetime.now(IST) - timedelta(days=7) # <--- IST TIMESTAMP
     posts = await db.discussions.find({"created_at": {"$gte": last_week}}).to_list(100)
     
     if not posts: return {"message": "No data"}
@@ -259,8 +262,8 @@ async def trigger_analysis():
 
     insight = {
         "period_start": last_week,
-        "period_end": datetime.utcnow(),
-        "generated_at": datetime.utcnow(),
+        "period_end": datetime.now(IST), # <--- IST TIMESTAMP
+        "generated_at": datetime.now(IST), # <--- IST TIMESTAMP
         "summary": analysis.get("summary", ""),
         "top_issues": analysis.get("top_issues", []),
         "sentiment_score": analysis.get("sentiment_score", 0),

@@ -1,169 +1,531 @@
 #!/bin/bash
 
-echo "🚀 Setting up Project-Based Chat Router (Matching your Logs)..."
+echo "🚀 Fixing 422 Error: Switching Reopen Endpoint to JSON Body..."
 
 # ==========================================
-# 1. Create app/routers/project_chat.py
+# 1. Update Schemas (Add ReopenRequest)
 # ==========================================
-echo "📝 Creating 'app/routers/project_chat.py'..."
+echo "📝 Updating 'app/schemas.py'..."
 
-cat <<'EOF' > app/routers/project_chat.py
-from fastapi import APIRouter, HTTPException, status, Query
-from app.database import db
-from pydantic import BaseModel
+cat <<'EOF' > app/schemas.py
+from pydantic import BaseModel, EmailStr, Field, validator
+from typing import Optional, List
 from datetime import datetime
-from bson import ObjectId
-from typing import List
 
-# MATCHING YOUR LOGS: Prefix is /project-chat
-router = APIRouter(prefix="/project-chat", tags=["Project Communication"])
+# --- Villager Schemas ---
+class VillagerSignup(BaseModel):
+    name: str
+    gender: str
+    age: int
+    email: EmailStr
+    phone_number: str
+    village_name: str
+    taluk: str
+    district: str
+    state: str
+    password: str
+    role: str = "villager"
 
-# --- Models ---
-class MessageCreate(BaseModel):
-    project_id: str
-    sender_id: str
-    role: str
-    content: str
+    @validator('phone_number')
+    def validate_phone(cls, v):
+        if not v.isdigit() or len(v) != 10:
+            raise ValueError('Phone number must be exactly 10 digits')
+        return v
 
-class MessageResponse(BaseModel):
+class VillagerLogin(BaseModel):
+    phone_number: str
+    password: str
+
+# --- Contractor Schemas ---
+class ContractorLogin(BaseModel):
+    contractor_id: str
+    password: str
+
+class ContractorCreate(BaseModel):
+    name: str
+    email: EmailStr
+    phone_number: str
+    contractor_id: str
+    password: str
+    role: str = "contractor"
+
+# --- Government Official Schemas ---
+class OfficialLogin(BaseModel):
+    government_id: str
+    password: str
+
+class OfficialCreate(BaseModel):
+    name: str
+    email: EmailStr
+    government_id: str
+    village_name: str
+    password: str
+    role: str = "government_official"
+
+# --- User Response Schemas ---
+class VillagerResponse(BaseModel):
     id: str
-    sender_id: str
+    name: str
+    gender: str
+    age: int
+    email: EmailStr
+    phone_number: str
+    village_name: str
+    taluk: str
+    district: str
+    state: str
     role: str
+    govt_official_id: Optional[str] = None
+    complaints_raised: List[str] = []
+    anonymous_identity: Optional[str] = None
+
+class ContractorResponse(BaseModel):
+    id: str
+    name: str
+    email: EmailStr
+    phone_number: str
+    contractor_id: str
+    role: str
+
+class OfficialResponse(BaseModel):
+    id: str
+    name: str
+    email: EmailStr
+    government_id: str
+    village_name: str
+    role: str
+    assigned_complaints: List[str] = []
+
+# --- Community Discussion Models ---
+class DiscussionComment(BaseModel):
+    user_name: str
+    user_role: str
     content: str
-    timestamp: datetime
+    created_at: datetime
+
+class DiscussionCreate(BaseModel):
+    content: str
+    category: str = "General"
+
+class CommentCreate(BaseModel):
+    content: str
+
+class DiscussionResponse(BaseModel):
+    id: str
+    village_name: str
+    user_name: str
+    user_role: str
+    content: str
+    category: str
+    created_at: datetime
+    upvotes: int
+    replies: List[DiscussionComment] = []
+    image_url: Optional[str] = None
+
+# --- AI Insight Models ---
+class InsightCreate(BaseModel):
+    period_start: datetime
+    period_end: datetime
+    summary: str
+    top_issues: list[str]
+    sentiment_score: float
+    suggested_actions: list[str]
+
+class InsightResponse(InsightCreate):
+    id: str
+    generated_at: datetime
+
+# --- Project Schemas ---
+class ProjectCreate(BaseModel):
+    project_name: str
+    description: str
+    category: str
+    village_name: str
+    location: str
+    contractor_name: str
+    contractor_id: str
+    contractor_address: str
+    allocated_budget: float
+    approved_by: str
+    start_date: datetime
+    due_date: datetime
+    status: str = "Pending"
+    images: list[str] = []
+
+class ProjectResponse(ProjectCreate):
+    id: str
+    created_at: datetime
+    milestones: list[str] = []
+
+# --- Dashboard Schemas ---
+class DashboardStats(BaseModel):
+    budget_used: float
+    issues_resolved: int
+    village_mood: str
+    personal_impact: int
+    next_meeting: str
+
+# --- Government Schemes Schemas ---
+class SchemeBase(BaseModel):
+    scheme_id: str
+    scheme_name: str
+    scheme_desc: str
+    scheme_dept: str
+
+class SchemeResponse(SchemeBase):
+    id: str
+
+# --- Proposed Projects Schemas ---
+class ProposedProjectCreate(BaseModel):
+    village_id: str
+    proposed_project_title: str
+
+class ProposedProjectResponse(BaseModel):
+    id: str
+    village_id: str
+    proposed_project_title: str
+    status: str
+    created_at: datetime
+
+# --- Complaint Schemas ---
+class ComplaintResponse(BaseModel):
+    id: str
+    complaint_name: str
+    complaint_desc: str
+    location: str
+    status: str
+    village_name: str
+    villager_phone: str
+    attachments: List[str]
+    created_at: datetime
+    
+    # Escalation Fields
+    days_pending: int = 0
+    is_escalated: bool = False
+    
+    # Resolution Details
+    resolution_notes: Optional[str] = None
+    resolution_attachments: List[str] = []
+    resolved_by: Optional[str] = None
+    resolved_at: Optional[datetime] = None
+    
+    # Reopen Logic (Visibility Fields)
+    reopen_count: int = 0
+    resolution_tier: str = "First Attempt"
+
+# --- NEW: Reopen Request Schema (JSON Body) ---
+class ReopenRequest(BaseModel):
+    phone_number: str
+
+# --- Contractor Dashboard Schemas ---
+class ProjectSummary(BaseModel):
+    id: str
+    project_name: str
+    status: str
+    allocated_budget: float
+    location: str
+    start_date: datetime
+
+class ContractorStats(BaseModel):
+    total_contract_value: float
+    active_projects_count: int
+    projects_completed_count: int
+    pending_issues_count: int
+
+class ContractorDashboardResponse(BaseModel):
+    id: str
+    name: str
+    email: str
+    phone_number: str
+    contractor_id: str
+    role: str
+    stats: ContractorStats
+    active_projects: List[ProjectSummary]
+
+# --- Project Discussion Schemas ---
+class ProjectChatCreate(BaseModel):
     project_id: str
+    sender_id: str
+    sender_role: str
+    content: str
 
-# --- API Endpoints ---
-
-@router.post("/send", response_model=MessageResponse)
-async def send_project_message(msg: MessageCreate):
-    """
-    Sends a message inside a specific Project Room.
-    Restricted to: The Assigned Contractor AND The Village Official.
-    """
-    # 1. Validate Project ID
-    try:
-        p_oid = ObjectId(msg.project_id)
-    except:
-        raise HTTPException(status_code=400, detail="Invalid Project ID")
-
-    project = await db.projects.find_one({"_id": p_oid})
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    # 2. Authorization Check
-    # A. If Sender is Contractor -> Must be the ASSIGNED Contractor
-    if msg.role == "contractor":
-        contractor = await db.contractors.find_one({"_id": ObjectId(msg.sender_id)})
-        if not contractor or contractor["contractor_id"] != project["contractor_id"]:
-             raise HTTPException(status_code=403, detail="Access Denied: You are not the contractor for this project.")
-
-    # B. If Sender is Official -> Must be Official of that Village
-    elif msg.role == "government_official":
-        official = await db.government_officials.find_one({"_id": ObjectId(msg.sender_id)})
-        if not official or official["village_name"] != project["village_name"]:
-             raise HTTPException(status_code=403, detail="Access Denied: This project is not in your jurisdiction.")
-    
-    else:
-        raise HTTPException(status_code=400, detail="Invalid Role")
-
-    # 3. Save Message
-    doc = {
-        "project_id": msg.project_id,
-        "sender_id": msg.sender_id,
-        "role": msg.role,
-        "content": msg.content,
-        "timestamp": datetime.utcnow()
-    }
-    
-    result = await db.project_chats.insert_one(doc)
-    
-    return {**doc, "id": str(result.inserted_id)}
-
-@router.get("/{project_id}", response_model=List[MessageResponse])
-async def get_project_chat_history(
-    project_id: str,
-    user_id: str = Query(..., description="User requesting history"),
-    role: str = Query(..., description="Role of the user")
-):
-    """
-    Fetch chat history for a specific project.
-    """
-    # 1. Validate Project
-    try:
-        p_oid = ObjectId(project_id)
-    except:
-        raise HTTPException(status_code=400, detail="Invalid Project ID")
-
-    project = await db.projects.find_one({"_id": p_oid})
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    # 2. Simple Auth Check (Ensure user is related to project)
-    # (For brevity, assuming frontend sends correct IDs. Secure version repeats checks above)
-
-    # 3. Fetch Messages
-    cursor = db.project_chats.find({"project_id": project_id}).sort("timestamp", 1)
-    messages = await cursor.to_list(1000)
-    
-    results = []
-    for m in messages:
-        m["id"] = str(m["_id"])
-        results.append(m)
-    return results
+class ProjectChatResponse(BaseModel):
+    id: str
+    project_id: str
+    sender_id: str
+    sender_role: str
+    sender_name: str
+    content: str
+    created_at: datetime
 EOF
 
 # ==========================================
-# 2. Register Router in app/main.py
+# 2. Update Router (Use JSON Body for Reopen)
 # ==========================================
-echo "🔗 Registering '/project-chat' in 'app/main.py'..."
+echo "📝 Rewriting 'app/routers/complaints.py'..."
 
-# Using Python script to safely patch main.py
-python3 -c "
-import sys
+cat <<'EOF' > app/routers/complaints.py
+from fastapi import APIRouter, HTTPException, status, Form, UploadFile, File, Query, Body
+from app.database import db
+from app.schemas import ComplaintResponse, ReopenRequest
+from app.utils.s3 import upload_file_to_s3
+from typing import List, Optional
+from datetime import datetime, timezone
+from bson import ObjectId
 
-try:
-    with open('app/main.py', 'r') as f:
-        content = f.read()
+router = APIRouter(prefix="/complaints", tags=["Complaints & Grievances"])
 
-    if 'project_chat' in content:
-        print('✅ Router already registered. Skipping.')
-        sys.exit(0)
+# --- Helper: Calculate Days, Escalation & Tier ---
+def process_complaint_status(complaint: dict) -> dict:
+    """
+    Computes 'resolution_tier' and handles status logic.
+    """
+    created_at = complaint.get("created_at")
+    current_status = complaint.get("status", "Pending")
+    
+    days_pending = 0
+    is_escalated = False
+    
+    # 1. Check Explicit Escalation
+    if current_status == "Migrated to Higher Officials":
+        is_escalated = True
 
-    # Add Import
-    content = content.replace(
-        'from app.routers import (',
-        'from app.routers import (\n    project_chat,'
+    # 2. Time-Based Calculation (14 Days)
+    if created_at:
+        try:
+            if isinstance(created_at, str):
+                try:
+                    created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                except:
+                    created_at = None
+
+            if created_at:
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+                
+                now_aware = datetime.now(timezone.utc)
+                delta = now_aware - created_at
+                days_pending = delta.days
+                
+                # 14 DAYS RULE
+                if current_status == "Pending" and days_pending > 14:
+                    is_escalated = True
+                    complaint["status"] = "Migrated to Higher Officials"
+                    
+        except Exception as e:
+            print(f"⚠️ Error calculating date for complaint {complaint.get('_id')}: {e}")
+
+    # 3. Calculate Resolution Tier
+    reopen_count = complaint.get("reopen_count", 0)
+    
+    tier_label = "First Attempt"
+    if is_escalated:
+        tier_label = "Escalated"
+    elif reopen_count == 1:
+        tier_label = "Second Attempt"
+    elif reopen_count >= 2:
+        tier_label = "Escalated"
+        is_escalated = True
+        
+    # 4. Fill Fields
+    complaint["id"] = str(complaint["_id"])
+    complaint["days_pending"] = days_pending
+    complaint["is_escalated"] = is_escalated
+    complaint["reopen_count"] = reopen_count
+    complaint["resolution_tier"] = tier_label
+    
+    complaint.setdefault("attachments", [])
+    complaint.setdefault("resolution_attachments", [])
+    complaint.setdefault("resolution_notes", None)
+    complaint.setdefault("resolved_by", None)
+    complaint.setdefault("resolved_at", None)
+    
+    return complaint
+
+# 1. RAISE COMPLAINT
+@router.post("/raise", status_code=status.HTTP_201_CREATED, response_model=ComplaintResponse)
+async def raise_complaint(
+    phone_number: str = Form(..., description="Registered Phone Number"),
+    complaint_name: str = Form(..., description="Title"),
+    complaint_desc: str = Form(..., description="Description"),
+    location: str = Form(..., description="Location"),
+    files: List[UploadFile] = File(default=None, description="Optional files to upload")
+):
+    villager = await db.villagers.find_one({"phone_number": phone_number})
+    if not villager:
+        raise HTTPException(status_code=404, detail="Villager not found.")
+    
+    village_name = villager["village_name"]
+
+    uploaded_urls = []
+    if files:
+        for file in files:
+            if file.filename:
+                url = upload_file_to_s3(file.file, file.filename, folder="complaints")
+                if url: uploaded_urls.append(url)
+
+    new_complaint = {
+        "complaint_name": complaint_name,
+        "complaint_desc": complaint_desc,
+        "location": location,
+        "villager_id": str(villager["_id"]),
+        "villager_name": villager["name"],
+        "villager_phone": phone_number,
+        "village_name": village_name,
+        "attachments": uploaded_urls,
+        "status": "Pending",
+        "created_at": datetime.now(timezone.utc),
+        "resolution_notes": None,
+        "resolution_attachments": [],
+        "resolved_by": None,
+        "resolved_at": None,
+        "reopen_count": 0
+    }
+
+    result = await db.complaints.insert_one(new_complaint)
+    complaint_id = result.inserted_id
+
+    await db.government_officials.update_many(
+        {"village_name": village_name},
+        {"$push": {"assigned_complaints": str(complaint_id)}}
+    )
+    await db.villagers.update_one(
+        {"_id": villager["_id"]},
+        {"$push": {"complaints_raised": str(complaint_id)}}
     )
 
-    # Add Include Router
-    # We append it after secure_chat or at the end of the router list
-    if 'app.include_router(secure_chat.router)' in content:
-        content = content.replace(
-            'app.include_router(secure_chat.router)',
-            'app.include_router(secure_chat.router)\napp.include_router(project_chat.router)'
-        )
-    elif 'app.include_router(complaints.router)' in content:
-        content = content.replace(
-            'app.include_router(complaints.router)',
-            'app.include_router(complaints.router)\napp.include_router(project_chat.router)'
-        )
-    else:
-        content += '\napp.include_router(project_chat.router)'
+    new_complaint["_id"] = complaint_id
+    return process_complaint_status(new_complaint)
 
-    with open('app/main.py', 'w') as f:
-        f.write(content)
+# 2. FETCH COMPLAINTS (Villager)
+@router.get("/villager/{phone_number}", response_model=List[ComplaintResponse])
+async def get_complaints_by_villager(phone_number: str):
+    clean_phone = phone_number.strip()
+    query = {"villager_phone": {"$regex": f"^\s*{clean_phone}\s*$", "$options": "i"}}
+    complaints = await db.complaints.find(query).sort("created_at", -1).to_list(100)
     
-    print('✅ app/main.py updated successfully.')
+    results = []
+    for c in complaints:
+        try:
+            results.append(process_complaint_status(c))
+        except:
+            pass
+    return results
 
-except Exception as e:
-    print(f'❌ Error patching main.py: {e}')
-"
+# 3. FETCH COMPLAINTS (Official)
+@router.get("/official/{government_id}", response_model=List[ComplaintResponse])
+async def get_complaints_for_official(government_id: str):
+    official = await db.government_officials.find_one({"government_id": government_id})
+    if not official:
+        raise HTTPException(status_code=404, detail="Official not found")
+
+    assigned_village = official["village_name"]
+    complaints = await db.complaints.find({"village_name": assigned_village}).sort("created_at", -1).to_list(100)
+    return [process_complaint_status(c) for c in complaints]
+
+# 4. RESOLVE COMPLAINT (Form Data - Allows File Uploads)
+@router.patch("/{complaint_id}/resolve", response_model=ComplaintResponse)
+async def resolve_complaint(
+    complaint_id: str,
+    official_id: str = Form(..., description="Government ID of Official"),
+    resolution_notes: str = Form(None, description="Remarks or notes on resolution"),
+    files: List[UploadFile] = File(default=None, description="Proof of resolution (Images/Docs)")
+):
+    official = await db.government_officials.find_one({"government_id": official_id})
+    if not official:
+        raise HTTPException(status_code=404, detail="Official not found")
+
+    try:
+        comp_oid = ObjectId(complaint_id)
+    except:
+        raise HTTPException(status_code=400, detail="Invalid Complaint ID format")
+
+    complaint = await db.complaints.find_one({"_id": comp_oid})
+    if not complaint:
+        raise HTTPException(status_code=404, detail="Complaint not found")
+
+    if complaint["village_name"] != official["village_name"]:
+        raise HTTPException(status_code=403, detail="Access Denied: You cannot manage complaints from other villages.")
+
+    created_at = complaint.get("created_at")
+    if created_at:
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        
+        delta = datetime.now(timezone.utc) - created_at
+        if delta.days > 14:
+             raise HTTPException(
+                 status_code=403, 
+                 detail="Action Forbidden: Complaint has exceeded 14 days and is migrated to higher officials."
+             )
+
+    resolution_urls = []
+    if files:
+        for file in files:
+            if file.filename:
+                url = upload_file_to_s3(file.file, file.filename, folder="resolutions")
+                if url: resolution_urls.append(url)
+
+    update_data = {
+        "status": "Resolved",
+        "resolution_notes": resolution_notes,
+        "resolution_attachments": resolution_urls,
+        "resolved_by": official["name"],
+        "resolved_at": datetime.now(timezone.utc)
+    }
+
+    await db.complaints.update_one({"_id": comp_oid}, {"$set": update_data})
+    updated_complaint = await db.complaints.find_one({"_id": comp_oid})
+    return process_complaint_status(updated_complaint)
+
+# 5. REOPEN COMPLAINT (JSON Data - "Not Resolved" Button)
+@router.patch("/{complaint_id}/reopen", response_model=ComplaintResponse)
+async def reopen_complaint(
+    complaint_id: str,
+    request: ReopenRequest
+):
+    """
+    Villager Marks Complaint as 'Not Resolved'.
+    Accepts JSON body: {"phone_number": "..."}
+    """
+    try:
+        comp_oid = ObjectId(complaint_id)
+    except:
+        raise HTTPException(status_code=400, detail="Invalid Complaint ID")
+
+    complaint = await db.complaints.find_one({"_id": comp_oid})
+    if not complaint:
+        raise HTTPException(status_code=404, detail="Complaint not found")
+
+    # Verify Phone Number from JSON body
+    if complaint["villager_phone"] != request.phone_number:
+         raise HTTPException(status_code=403, detail="Access Denied: You can only reopen your own complaints.")
+
+    if complaint.get("status") != "Resolved":
+         raise HTTPException(status_code=400, detail="Only 'Resolved' complaints can be reopened.")
+
+    current_reopens = complaint.get("reopen_count", 0)
+    new_reopens = current_reopens + 1
+    
+    update_data = {
+        "reopen_count": new_reopens
+    }
+
+    if new_reopens == 1:
+        # First Reopen -> Second Attempt
+        update_data["status"] = "Pending"
+        update_data["created_at"] = datetime.now(timezone.utc) # RESET TIMER
+        
+    elif new_reopens >= 2:
+        # Second Reopen -> Escalated
+        update_data["status"] = "Migrated to Higher Officials"
+
+    await db.complaints.update_one({"_id": comp_oid}, {"$set": update_data})
+    
+    updated_complaint = await db.complaints.find_one({"_id": comp_oid})
+    return process_complaint_status(updated_complaint)
+EOF
 
 echo "---------------------------------------------------"
-echo "✅ FIXED: Project Chat API matches your Logs!"
-echo "---------------------------------------------------"
-echo "Endpoints Available:"
-echo "1. POST /project-chat/send (Body: project_id, sender_id, role, content)"
-echo "2. GET /project-chat/{project_id}?user_id=...&role=..."
+echo "✅ SUCCESS: Reopen Endpoint now accepts JSON!"
 echo "---------------------------------------------------"

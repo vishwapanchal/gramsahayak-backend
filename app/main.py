@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.database import db
 from app.routers import (
-    project_chat,
+    official_contractor_chat,
     auth, 
     community, 
     users, 
@@ -12,7 +12,6 @@ from app.routers import (
     schemes, 
     proposals, 
     complaints,
-    secure_chat
 )
 import pymongo
 
@@ -52,8 +51,7 @@ app.include_router(dashboard.router)
 app.include_router(schemes.router)
 app.include_router(proposals.router)
 app.include_router(complaints.router)
-app.include_router(secure_chat.router)
-app.include_router(project_chat.router)
+app.include_router(official_contractor_chat.router)
 
 @app.get("/")
 async def root():

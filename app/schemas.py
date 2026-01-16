@@ -188,11 +188,26 @@ class ComplaintResponse(BaseModel):
     villager_phone: str
     attachments: List[str]
     created_at: datetime
+    
+    # Escalation Fields
+    days_pending: int = 0
+    is_escalated: bool = False
+    
+    # Resolution Details
+    resolution_notes: Optional[str] = None
+    resolution_attachments: List[str] = []
+    resolved_by: Optional[str] = None
+    resolved_at: Optional[datetime] = None
+    
+    # Reopen Logic (Visibility Fields)
+    reopen_count: int = 0
+    resolution_tier: str = "First Attempt"
 
-# ==========================================
-# NEW: CONTRACTOR DASHBOARD SCHEMAS
-# ==========================================
+# --- NEW: Reopen Request Schema (JSON Body) ---
+class ReopenRequest(BaseModel):
+    phone_number: str
 
+# --- Contractor Dashboard Schemas ---
 class ProjectSummary(BaseModel):
     id: str
     project_name: str
@@ -210,22 +225,18 @@ class ContractorStats(BaseModel):
 class ContractorDashboardResponse(BaseModel):
     id: str
     name: str
-    email: str  # using str to avoid strict email validation errors
+    email: str
     phone_number: str
     contractor_id: str
     role: str
-    
-    # New Dashboard Data
     stats: ContractorStats
     active_projects: List[ProjectSummary]
 
-# ==========================================
-# NEW: PROJECT DISCUSSION SCHEMAS
-# ==========================================
+# --- Project Discussion Schemas ---
 class ProjectChatCreate(BaseModel):
     project_id: str
     sender_id: str
-    sender_role: str  # "contractor" or "official"
+    sender_role: str
     content: str
 
 class ProjectChatResponse(BaseModel):
